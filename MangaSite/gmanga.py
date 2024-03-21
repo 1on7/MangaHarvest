@@ -1,9 +1,12 @@
+import sys
+from os import path
+sys.path.append(path.dirname(path.dirname(path.abspath(__file__))))
 import asyncio
 from aiohttp import ClientSession, ClientTimeout
 from bs4 import BeautifulSoup
 import re
 import json
-import time
+from utils import date
 
 async def fetch(url, method='GET', data=None, headers=None):
     async with ClientSession(timeout=ClientTimeout(total=30)) as session:
@@ -15,10 +18,10 @@ async def fetch(url, method='GET', data=None, headers=None):
                 return await response.text()
         else:
             raise ValueError(f"Invalid HTTP method: {method}")
-
-async def get_gmanga_info(name):
-    url = 'https://api.gmanga.me/api/quick_search'
-    payload = {'query': name, 'includes': ['Manga']}
+        
+async def gmanga_search(name):
+    url = 'https://gmanga.site/wp-admin/admin-ajax.php'
+    payload = {'title': name, 'action': 'wp-manga-search-manga'}
     headers = {
         'content-type': 'application/json',
         'sec-ch-ua': '"Not A(Brand";v="99", "Opera";v="107", "Chromium";v="121"',
@@ -34,44 +37,86 @@ async def get_gmanga_info(name):
         'sec-fetch-mode': 'cors',
         'sec-fetch-site': 'same-origin',
         'x-requested-with': 'XMLHttpRequest',
-        'referrer': 'https://gmanga.me/'
+        'referrer': 'https://gmanga.site/'
     }
 
     response_text = await fetch(url, method='POST', data=payload, headers=headers)
     data = json.loads(response_text)
-    if data:
-        manga_data = data[0]["data"]
-        if manga_data:
-            manga_info = manga_data[0]
-            title = manga_info.get('title')
-            summary = manga_info.get('summary').replace("\n", "").replace('"', "'")
-            cover_url = f"https://media.gmanga.me/uploads/manga/cover/{manga_info.get('id')}/{manga_info.get('cover')}"
-            manga_id = manga_info.get('id')
-            latest_chapter = float(manga_info.get('latest_chapter'))
-            return {"title": title, "summary": summary, "cover": cover_url, "id": manga_id, "latest_chapter": latest_chapter}
-        else:
-            return "not found"
-    else:
-        return "Error"
+    if not data["data"]:
+        return "not found"
+    first_item = data["data"][0]
+    title = first_item["title"]
+    url = first_item["url"]
+    info = await gmanga_info(str(url).replace('/', ''))
+    return info
 
-async def get_gmanga_chapter_imgs(chapter_url):
-    response_text = await fetch(chapter_url)
-    pattern = r'g"],(.*?),"file'
-    match = re.search(pattern, response_text, re.DOTALL)
-    if match:
-        webp_pages = "{" + match.group(1) + "}"
-        webp_pages = json.loads(webp_pages)
-        webp_url = []
-        if webp_pages:
-            storage_key = webp_pages.get("storage_key")
-            for webp_page in webp_pages["webp_pages"]:
-                webp_url.append(f"https://media.gmanga.me/uploads/releases/{storage_key}/mq_webp/{webp_page}")
-            return webp_url
+async def gmanga_latest_chapters(post_url):
+    url = f"{post_url}ajax/chapters/"
+    headers = {
+        "accept": "application/json, text/javascript, */*; q=0.01",
+        "accept-language": "en-US,en;q=0.9",
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "sec-ch-ua": "\"Not A(Brand\";v=\"99\", \"Opera\";v=\"107\", \"Chromium\";v=\"121\"",
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": "\"Windows\"",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
+        "x-requested-with": "XMLHttpRequest",
+        "x-oxylabs-render":"html"
+    }
+    response_text = await fetch(url, method='POST', headers=headers)
+    if response_text:
+        soup = BeautifulSoup(response_text, 'html.parser')
+        chapter_items = soup.find('li', class_='wp-manga-chapter')
+        try:
+            chapter_num = int(chapter_items.a.text.strip())
+        except ValueError:
+            chapter_num = float(chapter_items.a.text.strip())
+        return chapter_num
     else:
+        print("Failed to retrieve data.")
         return None
 
-async def get_gmanga_chapters(id, name):
-    url = f"https://api2.gmanga.me/api/mangas/{id}/releases"
+async def gmanga_info(url):
+    headers = {
+        "accept": "application/json, text/javascript, */*; q=0.01",
+        "accept-language": "en-US,en;q=0.9",
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "sec-ch-ua": "\"Not A(Brand\";v=\"99\", \"Opera\";v=\"107\", \"Chromium\";v=\"121\"",
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": "\"Windows\"",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
+        "x-requested-with": "XMLHttpRequest",
+        "x-oxylabs-render":"html"
+    }
+
+    response_text = await fetch(url, method='POST', headers=headers)
+    soup = BeautifulSoup(response_text, 'html.parser')
+    title = soup.find("div", class_="post-title").find("h1").text.strip()
+    description = soup.find("div", class_="summary__content").get_text(strip=True)
+    image_url = soup.find("div", class_="summary_image").find("img")["data-src"]
+    pattern = r'"manga_id"\s*:\s*"(\d+)"'
+    match = re.search(pattern, response_text)
+    if match:
+        manga_id = match.group(1)
+    else:
+        print("Manga ID not found.")
+        return "not found"
+    latest_chapter = await gmanga_latest_chapters(url)
+    return {"title": title, "summary": description, "cover": image_url, "id": manga_id, "latest_chapter": latest_chapter}
+
+async def gmanga_chapter_imgs(chapter_url):
+    response_text = await fetch(chapter_url)
+    soup = BeautifulSoup(response_text, 'html.parser')
+    image_divs = soup.find_all("div", class_="page-break")
+    image_urls = [div.find('img')['src'].strip() for div in image_divs]
+    return image_urls
+
+async def gmanga_chapters(post_url):
+    url = f"{post_url}ajax/chapters/"
     headers = {
         "content-type": "application/json",
         "sec-ch-ua": "\"Not A(Brand\";v=\"99\", \"Chrome\";v=\"107\", \"Chromium\";v=\"121\"",
@@ -91,20 +136,22 @@ async def get_gmanga_chapters(id, name):
     }
     response_text = await fetch(url, headers=headers)
     if response_text:
-        manga_data = json.loads(response_text)
-        releases = manga_data.get("releases", [])
-        teams = manga_data.get("teams", [])
+        soup = BeautifulSoup(response_text, 'html.parser')
+        chapter_items = soup.find_all('li', class_='wp-manga-chapter')
         chapters_info = {}
-        for chapter in releases:
-            chapter_key = (chapter.get("chapter"), chapter.get("title"))
-            team_name = next((m["name"] for m in teams if m["id"] == chapter.get("team_id")), None)
-            chapter_id = chapter.get("id")
-            if team_name:
-                if chapter_key not in chapters_info:
-                    chapters_info[chapter_key] = {"chapter": chapter.get("chapter"), "teams": [{"team_name": team_name, "chapter_date": datetime.datetime.fromtimestamp(chapter.get("time_stamp")).strftime('%Y-%m-%d'), "chapter_page": await get_gmanga_chapter_imgs(f"https://gmanga.me/mangas/{id}/{name}/{chapter.get('chapter')}/{chapter_id}")}]}
-                else:
-                    chapters_info[chapter_key]["teams"].append({"team_name": team_name, "chapter_date": datetime.datetime.fromtimestamp(chapter.get("time_stamp")).strftime('%Y-%m-%d'), "chapter_page": await get_gmanga_chapter_imgs(f"https://gmanga.me/mangas/{id}/{name}/{chapter.get('chapter')}/{chapter_id}")})
-            await asyncio.sleep(5)
+        for chapter in chapter_items:
+            try:
+                chapter_num = int(chapter.a.text.strip())
+            except ValueError:
+                chapter_num = float(chapter.a.text.strip())
+            chapter_url = chapter.a['href']
+            release_date = chapter.find('span', class_='chapter-release-date').i.text
+            chapter_key = (chapter_num, 'gmanga')
+            team_name = "gmanga"
+            print(chapter_num)
+            chapter_number = chapter_num
+            chapters_info[chapter_key] = {"chapter": chapter_num, "teams": [{"team_name": team_name, "chapter_date": date.convert_arabic_date_to_numeric(release_date.replace('،', '')), "chapter_page": await gmanga_chapter_imgs(chapter_url)}]}
+            await asyncio.sleep(2)
         return list(chapters_info.values())
     else:
         print("Failed to retrieve data.")
