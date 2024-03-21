@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manga Upload Progress</title>
+    <style>
+        /* Style for progress bar */
+        .progress {
+            width: 100%;
+            background-color: #ddd;
+        }
+        .progress-bar {
+            width: {{ progress }}%;
+            height: 30px;
+            background-color: #4caf50;
+            color: white;
+            text-align: center;
+            line-height: 30px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Manga Upload Progress</h1>
+    <div class="progress">
+        <div class="progress-bar" style="width:{{ progress }}%;">{{ progress }}%</div>
+    </div>
+    <p>{{ manga_name }} - Chapter {{ chapter_num }}</p>
+</body>
+</html>
