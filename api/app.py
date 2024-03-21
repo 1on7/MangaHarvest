@@ -1,23 +1,20 @@
-import asyncio
-import re
+import base64
 import sys
 from os import path
-import time
+
 sys.path.append(path.dirname(path.dirname(path.abspath(__file__))))
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from typing import Optional
 from pydantic import BaseModel
-from models.manga import MangaInfo
 from MangaSite import gmanga, aresnov, mangaSpark
 from utils import mangaUpdate
 from config import database
 from schema import schemas
-from fastapi.templating import Jinja2Templates
 from bson import ObjectId
 
 app = FastAPI()
-templates = Jinja2Templates(directory="templates")  # Assuming templates are in a directory named "templates"
+
 db = database
 
 
@@ -110,6 +107,14 @@ async def info_manga(manga_id: Optional[str] = Query(None)):
     else:
         return {"message": "Manga not found"}
 
+@app.get("/manga/chapters/{manga_id}")
+async def chapters_manga(manga_id: str):
+    manga = db.collection_mamga_chapters.find_one({"manga_id":manga_id})
+    # Convert ObjectId to string
+    if manga:
+        return schemas.mangaChapters(manga)
+    else:
+        raise HTTPException(status_code=404, detail="Chapters not found")
 
 # search (GET) operation to search manga by name
 @app.get("/manga/search")
