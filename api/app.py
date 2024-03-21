@@ -157,9 +157,3 @@ async def latest_manga():
         return schemas.list_mangaInfo(manga_info_list)
     else:
         return JSONResponse(content={"message": "Manga not found"}, status_code=404)
-
-
-# Run the FastAPI application with uvicorn
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=5000)
