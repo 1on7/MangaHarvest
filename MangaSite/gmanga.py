@@ -45,7 +45,7 @@ async def gmanga_search(name):
     response_data = json.loads(response_text)
     
     if not response_data["success"]:
-       return "not found")
+       return "not found"
     # Extract title and URL
     manga = response_data.get("data", [])[0]
     title = manga.get("title")
