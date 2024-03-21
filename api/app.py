@@ -41,7 +41,7 @@ async def add_manga(upload_data: UploadData, request: Request):
         manga_web = ''
         
         # Try getting manga info from gmanga
-        info_gmanga = gmanga.gmanga_search(name)
+        info_gmanga = await gmanga.gmanga_search(name)
         if info_gmanga != "not found":
             gmanga_last_chapter = info_gmanga.get('latest_chapter')
             if gmanga_last_chapter > max_last_chapter:
