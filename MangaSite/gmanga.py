@@ -1,158 +1,176 @@
+import base64
 import sys
 from os import path
+
 sys.path.append(path.dirname(path.dirname(path.abspath(__file__))))
-import asyncio
-from aiohttp import ClientSession, ClientTimeout
-from bs4 import BeautifulSoup
-import re
-import json
-from utils import date
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
+from typing import Optional
+from pydantic import BaseModel
+from MangaSite import gmanga, aresnov, mangaSpark
+from utils import mangaUpdate
+from config import database
+from schema import schemas
+from bson import ObjectId
 
-async def fetch(url, method='GET', data=None, headers=None):
-    async with ClientSession(timeout=ClientTimeout(total=30)) as session:
-        if method == 'GET':
-            async with session.get(url, headers=headers) as response:
-                return await response.text()
-        elif method == 'POST':
-            async with session.post(url, json=data, headers=headers) as response:
-                return await response.text()
-        else:
-            raise ValueError(f"Invalid HTTP method: {method}")
+app = FastAPI()
+
+db = database
+
+
+class UploadData(BaseModel):
+    data: str  # Assuming the data will be received as a string
+
+
+# Create (POST) operation to add new manga
+@app.post("/manga/add")
+async def add_manga(upload_data: UploadData, request: Request):
+    data = upload_data.data
+    # Decode the Base64-encoded data back to binary
+    decoded_data = base64.b64decode(data)
+    # Convert binary data to string
+    decoded_str = decoded_data.decode('utf-8')
+    # Split the string into individual names
+    names = decoded_str.split('\n')
+
+    for position, name in enumerate(names):
+        print(name)
+        manga_found = False
+        max_last_chapter = -1
+        selected_info = None
+        manga_web = ''
         
-async def gmanga_search(name):
-    url = 'https://gmanga.site/wp-admin/admin-ajax.php'
-    payload = {'title': name, 'action': 'wp-manga-search-manga'}
-    headers = {
-        'content-type': 'application/json',
-        'sec-ch-ua': '"Not A(Brand";v="99", "Opera";v="107", "Chromium";v="121"',
-        'sec-ch-ua-arch': '"x86"',
-        'sec-ch-ua-bitness': '"64"',
-        'sec-ch-ua-full-version': '"107.0.5045.21"',
-        'sec-ch-ua-full-version-list': '"Not A(Brand";v="99.0.0.0", "Opera";v="107.0.5045.21", "Chromium";v="121.0.6167.160"',
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-model': '""',
-        'sec-ch-ua-platform': '"Windows"',
-        'sec-ch-ua-platform-version': '"10.0.0"',
-        'sec-fetch-dest': 'empty',
-        'sec-fetch-mode': 'cors',
-        'sec-fetch-site': 'same-origin',
-        'x-requested-with': 'XMLHttpRequest',
-        'referrer': 'https://gmanga.site/'
-    }
+        # Try getting manga info from gmanga
+        info_gmanga = gmanga.gmanga_search(name)
+        if info_gmanga != "not found":
+            gmanga_last_chapter = info_gmanga.get('latest_chapter')
+            if gmanga_last_chapter > max_last_chapter:
+                max_last_chapter = aresnov_last_chapter
+                selected_info = info_gmanga
+                manga_web = 'gmanga'
+                print(manga_web)
+                manga_found = True
+                
+        # Try getting manga info from aresnov
+        info_aresnov = aresnov.get_aresnov_info(name)
+        if info_aresnov != "not found":
+            aresnov_last_chapter = info_aresnov.get('latest_chapter')
+            alternative_title = info_aresnov.get('alternative_title')
+            if aresnov_last_chapter >= max_last_chapter:
+                max_last_chapter = aresnov_last_chapter
+                info_aresnov.pop('alternative_title')
+                selected_info = info_aresnov
+                manga_web = 'aresnov'
+                print(manga_web)
+                manga_found = True
 
-    response_text = await fetch(url, method='POST', data=payload, headers=headers)
-    data = json.loads(response_text)
-    if not data["data"]:
-        return "not found"
-    first_item = data["data"][0]
-    title = first_item["title"]
-    url = first_item["url"]
-    info = await gmanga_info(str(url).replace('/', ''))
-    return info
+        # Try getting manga info from mangaSpark
+        info_mangaspark = await mangaSpark.mangaspark_search(name)
+        if info_mangaspark != "not found":
+            mangaSpark_last_chapter = info_mangaspark.get('latest_chapter')
+            if mangaSpark_last_chapter >= max_last_chapter:
+                max_last_chapter = mangaSpark_last_chapter
+                selected_info = info_mangaspark
+                manga_web = 'mangaspark'
+                print(manga_web)
+                manga_found = True
 
-async def gmanga_latest_chapters(post_url):
-    url = f"{post_url}ajax/chapters/"
-    headers = {
-        "accept": "application/json, text/javascript, */*; q=0.01",
-        "accept-language": "en-US,en;q=0.9",
-        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "sec-ch-ua": "\"Not A(Brand\";v=\"99\", \"Opera\";v=\"107\", \"Chromium\";v=\"121\"",
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": "\"Windows\"",
-        "sec-fetch-dest": "empty",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-origin",
-        "x-requested-with": "XMLHttpRequest",
-        "x-oxylabs-render":"html"
-    }
-    response_text = await fetch(url, method='POST', headers=headers)
-    if response_text:
-        soup = BeautifulSoup(response_text, 'html.parser')
-        chapter_items = soup.find('li', class_='wp-manga-chapter')
-        try:
-            chapter_num = int(chapter_items.a.text.strip())
-        except ValueError:
-            chapter_num = float(chapter_items.a.text.strip())
-        return chapter_num
-    else:
-        print("Failed to retrieve data.")
-        return None
+        if manga_web == 'gmanga':
+            chapters = await gmanga.gmanga_chapters(selected_info.get('post_url'))
+            selected_info.pop('post_url')
 
-async def gmanga_info(url):
-    headers = {
-        "accept": "application/json, text/javascript, */*; q=0.01",
-        "accept-language": "en-US,en;q=0.9",
-        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "sec-ch-ua": "\"Not A(Brand\";v=\"99\", \"Opera\";v=\"107\", \"Chromium\";v=\"121\"",
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": "\"Windows\"",
-        "sec-fetch-dest": "empty",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-origin",
-        "x-requested-with": "XMLHttpRequest",
-        "x-oxylabs-render":"html"
-    }
+        if manga_web == 'aresnov':
+            title = str(info_aresnov.get('title'))
+            chapters = aresnov.get_aresnov_chapters(title.replace(' ', '-'))
 
-    response_text = await fetch(url, method='POST', headers=headers)
-    soup = BeautifulSoup(response_text, 'html.parser')
-    title = soup.find("div", class_="post-title").find("h1").text.strip()
-    description = soup.find("div", class_="summary__content").get_text(strip=True)
-    image_url = soup.find("div", class_="summary_image").find("img")["data-src"]
-    pattern = r'"manga_id"\s*:\s*"(\d+)"'
-    match = re.search(pattern, response_text)
-    if match:
-        manga_id = match.group(1)
-    else:
-        print("Manga ID not found.")
-        return "not found"
-    latest_chapter = await gmanga_latest_chapters(url)
-    return {"title": title, "summary": description, "cover": image_url, "id": manga_id, "latest_chapter": latest_chapter}
+        if manga_web == 'mangaspark':
+            chapters = await mangaSpark.mangaspark_chapters(selected_info.get('id'))
 
-async def gmanga_chapter_imgs(chapter_url):
-    response_text = await fetch(chapter_url)
-    soup = BeautifulSoup(response_text, 'html.parser')
-    image_divs = soup.find_all("div", class_="page-break")
-    image_urls = [div.find('img')['src'].strip() for div in image_divs]
-    return image_urls
-
-async def gmanga_chapters(post_url):
-    url = f"{post_url}ajax/chapters/"
-    headers = {
-        "content-type": "application/json",
-        "sec-ch-ua": "\"Not A(Brand\";v=\"99\", \"Chrome\";v=\"107\", \"Chromium\";v=\"121\"",
-        "sec-ch-ua-arch": "\"x86\"",
-        "sec-ch-ua-bitness": "\"64\"",
-        "sec-ch-ua-full-version": "\"107.0.5045.21\"",
-        "sec-ch-ua-full-version-list": "\"Not A(Brand\";v=\"99.0.0.0\", \"Chrome\";v=\"107.0.5045.21\", \"Chromium\";v=\"121.0.6167.160\"",
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-model": "\"\"",
-        "sec-ch-ua-platform": "\"Windows\"",
-        "sec-ch-ua-platform-version": "\"10.0.0\"",
-        "sec-fetch-dest": "empty",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-origin",
-        "x-requested-with": "XMLHttpRequest",
-        "referrer": "https://gmanga.me/"
-    }
-    response_text = await fetch(url, headers=headers)
-    if response_text:
-        soup = BeautifulSoup(response_text, 'html.parser')
-        chapter_items = soup.find_all('li', class_='wp-manga-chapter')
-        chapters_info = {}
-        for chapter in chapter_items:
+        if manga_found:
             try:
-                chapter_num = int(chapter.a.text.strip())
-            except ValueError:
-                chapter_num = float(chapter.a.text.strip())
-            chapter_url = chapter.a['href']
-            release_date = chapter.find('span', class_='chapter-release-date').i.text
-            chapter_key = (chapter_num, 'gmanga')
-            team_name = "gmanga"
-            print(chapter_num)
-            chapter_number = chapter_num
-            chapters_info[chapter_key] = {"chapter": chapter_num, "teams": [{"team_name": team_name, "chapter_date": date.convert_arabic_date_to_numeric(release_date.replace('،', '')), "chapter_page": await gmanga_chapter_imgs(chapter_url)}]}
-            await asyncio.sleep(2)
-        return list(chapters_info.values())
+                type, year, rate, categories, associated_titles, status = mangaUpdate.get_manga_updates_data(
+                    selected_info.get('title'))
+            except:
+                type, year, rate, categories, associated_titles, status = mangaUpdate.get_manga_updates_data(
+                    alternative_title)
+            selected_info['id'] = position
+            selected_info.update({"year": year, "rate": round(rate, 1), "associated": associated_titles,
+                                  "categories": categories, "status": status, "type": type})
+
+            # Insert manga info into manga_collection
+            manga_insert_result = db.collection_mamga_info.insert_one(selected_info)
+            manga_id = str(manga_insert_result.inserted_id)
+
+            # Add manga ID to each chapter document before inserting
+            chapters_list = {"manga_id": manga_id, "chapters": chapters}
+            db.collection_mamga_chapters.insert_one(chapters_list)
+
+    return JSONResponse(content=None, status_code=200)
+
+
+# Info (GET) operation to get manga by id
+@app.get("/manga/")
+async def info_manga(manga_id: Optional[str] = Query(None)):
+    manga = db.collection_mamga_info.find_one({"_id": ObjectId(manga_id)})
+    # Convert ObjectId to string
+    if manga and "_id" in manga:
+        manga["_id"] = str(manga["_id"])
+        return schemas.mangaInfo(manga)
     else:
-        print("Failed to retrieve data.")
-        return None
+        return {"message": "Manga not found"}
+
+@app.get("/manga/chapters/{manga_id}")
+async def chapters_manga(manga_id: str):
+    manga = db.collection_mamga_chapters.find_one({"manga_id":manga_id})
+    # Convert ObjectId to string
+    if manga:
+        return schemas.mangaChapters(manga)
+    else:
+        raise HTTPException(status_code=404, detail="Chapters not found")
+
+# search (GET) operation to search manga by name
+@app.get("/manga/search")
+async def search_manga(name: Optional[str] = Query(None)):
+    if name:
+        # Search for documents where the title contains the provided query string
+        manga_info_list = db.collection_mamga_info.find({"title": {"$regex": name, "$options": "i"}})
+        # Convert ObjectId to string and return manga info
+        manga_list = []
+        for manga in manga_info_list:
+            manga["_id"] = str(manga["_id"])
+            manga_list.append(manga)
+        if manga_list:
+            return schemas.list_mangaInfo(manga_list)
+        else:
+            return JSONResponse(content={"message": "Manga not found"}, status_code=404)
+    else:
+        return JSONResponse(content={"message": "Please provide a manga name to search for."}, status_code=400)
+
+
+# Update (PUT) operation to edit manga by ID
+@app.put("/manga/{manga_id}")
+async def update_manga(manga_id: str, key: str, value: str):
+    manga_info = db.collection_mamga_info.find_one_and_update({"_id": ObjectId(manga_id)}, {"$set": {key: value}})
+    if str(manga_info["_id"]) == manga_id:
+        return {"message": "Manga updated successfully"}
+    raise HTTPException(status_code=404, detail="Manga not found")
+
+
+# Delete (DELETE) operation to delete manga by ID
+@app.delete("/manga/{manga_id}")
+async def delete_manga(manga_id: str):
+    manga_info = db.collection_mamga_info.find_one_and_delete({"_id": ObjectId(manga_id)})
+    if manga_info:
+        return {"message": "Manga deleted successfully"}
+    raise HTTPException(status_code=404, detail="Manga not found")
+
+
+# latest (GET) operation to get latest manga
+@app.get("/manga/latest")
+async def latest_manga():
+    manga_info_list = db.collection_mamga_info.find()
+    print(manga_info_list)
+    if manga_info_list:
+        return schemas.list_mangaInfo(manga_info_list)
+    else:
+        return JSONResponse(content={"message": "Manga not found"}, status_code=404)
