@@ -39,7 +39,18 @@ async def add_manga(upload_data: UploadData, request: Request):
         max_last_chapter = -1
         selected_info = None
         manga_web = ''
-
+        
+        # Try getting manga info from gmanga
+        info_gmanga = gmanga.gmanga_search(name)
+        if info_gmanga != "not found":
+            gmanga_last_chapter = info_gmanga.get('latest_chapter')
+            if gmanga_last_chapter > max_last_chapter:
+                max_last_chapter = aresnov_last_chapter
+                selected_info = info_gmanga
+                manga_web = 'gmanga'
+                print(manga_web)
+                manga_found = True
+                
         # Try getting manga info from aresnov
         info_aresnov = aresnov.get_aresnov_info(name)
         if info_aresnov != "not found":
@@ -65,7 +76,8 @@ async def add_manga(upload_data: UploadData, request: Request):
                 manga_found = True
 
         if manga_web == 'gmanga':
-            chapters = await gmanga.get_gmanga_chapters(selected_info.get('id'), selected_info.get('title'))
+            chapters = await gmanga.gmanga_chapters(selected_info.get('post_url'))
+            selected_info.pop('post_url')
 
         if manga_web == 'aresnov':
             title = str(info_aresnov.get('title'))
