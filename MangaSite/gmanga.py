@@ -43,8 +43,9 @@ async def gmanga_search(name):
     response_text = await fetch(url, method='POST', data=payload, headers=headers)
     # Parse the JSON response
     response_data = json.loads(response_text)
-    if not response_data["data"]:
-        return "not found"
+    
+    if not response_data["success"]:
+       return "not found")
     # Extract title and URL
     manga = response_data.get("data", [])[0]
     title = manga.get("title")
