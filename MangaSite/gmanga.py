@@ -9,47 +9,31 @@ import json
 from utils import date
 
 async def fetch(url, method='GET', data=None, headers=None):
-    async with ClientSession(timeout=ClientTimeout(total=30)) as session:
+    async with ClientSession() as session:
         if method == 'GET':
             async with session.get(url, headers=headers) as response:
                 return await response.text()
         elif method == 'POST':
-            async with session.post(url, json=data, headers=headers) as response:
-                return await response.text()
+            async with session.post(url, data=data, headers=headers) as response:
+                response_txt = await response.text()
+                return response_txt
         else:
             raise ValueError(f"Invalid HTTP method: {method}")
         
 async def gmanga_search(name):
     url = 'https://gmanga.site/wp-admin/admin-ajax.php'
-    payload = {'title': name, 'action': 'wp-manga-search-manga'}
-    headers = {
-        'content-type': 'application/json',
-        'sec-ch-ua': '"Not A(Brand";v="99", "Opera";v="107", "Chromium";v="121"',
-        'sec-ch-ua-arch': '"x86"',
-        'sec-ch-ua-bitness': '"64"',
-        'sec-ch-ua-full-version': '"107.0.5045.21"',
-        'sec-ch-ua-full-version-list': '"Not A(Brand";v="99.0.0.0", "Opera";v="107.0.5045.21", "Chromium";v="121.0.6167.160"',
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-model': '""',
-        'sec-ch-ua-platform': '"Windows"',
-        'sec-ch-ua-platform-version': '"10.0.0"',
-        'sec-fetch-dest': 'empty',
-        'sec-fetch-mode': 'cors',
-        'sec-fetch-site': 'same-origin',
-        'x-requested-with': 'XMLHttpRequest',
-        'referrer': 'https://gmanga.site/'
-    }
+    payload = {"title": name, "action": "wp-manga-search-manga"}
 
-    response_text = await fetch(url, method='POST', data=payload, headers=headers)
-    # Parse the JSON response
-    response_data = json.loads(response_text)
-    
-    if not response_data["success"]:
-       return "not found"
-    # Extract title and URL
-    manga = response_data.get("data", [])[0]
-    title = manga.get("title")
-    url = manga.get("url")
+    response_text = await fetch(url, method='POST', data=payload)
+    data = json.loads(response_text)
+    if data.get("success"):
+        print(data.get("success"))
+
+    manga_list = data.get("data", [])
+    if manga_list:
+        manga = manga_list[0]
+        title = manga.get("title")
+        url = manga.get("url")
     info = await gmanga_info(url)
     return info
 
@@ -72,10 +56,11 @@ async def gmanga_latest_chapters(post_url):
     if response_text:
         soup = BeautifulSoup(response_text, 'html.parser')
         chapter_items = soup.find('li', class_='wp-manga-chapter')
+        chapter_items = re.search(r'\d+', chapter_items.a.text.strip()).group()
         try:
-            chapter_num = int(chapter_items.a.text.strip())
+            chapter_num = float(chapter_items)
         except ValueError:
-            chapter_num = float(chapter_items.a.text.strip())
+            chapter_num = int(chapter_items)
         return chapter_num
     else:
         print("Failed to retrieve data.")
@@ -115,7 +100,7 @@ async def gmanga_chapter_imgs(chapter_url):
     response_text = await fetch(chapter_url)
     soup = BeautifulSoup(response_text, 'html.parser')
     image_divs = soup.find_all("div", class_="page-break")
-    image_urls = [div.find('img')['src'].strip() for div in image_divs]
+    image_urls = [div.find('img')['data-src'].strip() for div in image_divs]
     return image_urls
 
 async def gmanga_chapters(post_url):
@@ -137,7 +122,7 @@ async def gmanga_chapters(post_url):
         "x-requested-with": "XMLHttpRequest",
         "referrer": "https://gmanga.me/"
     }
-    response_text = await fetch(url, headers=headers)
+    response_text = await fetch(url, method='POST', headers=headers)
     if response_text:
         soup = BeautifulSoup(response_text, 'html.parser')
         chapter_items = soup.find_all('li', class_='wp-manga-chapter')
