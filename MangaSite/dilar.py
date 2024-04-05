@@ -124,10 +124,10 @@ async def dilar_chapters(id, title):
     if response:
         chapters_info = {}
         for release in response["releases"]:
-            # Extract chapter URL
-            chapter_url = f"https://dilar.tube/mangas/{id}/{title.replace(' ', '-')}/{release["chapter"]}"
             # Extract chapter number
             chapter_num = release["chapter"]
+            # Extract chapter URL
+            chapter_url = f"https://dilar.tube/mangas/{id}/{title.replace(' ', '-')}/{chapter_num}"
             chapter_date = datetime.datetime.fromtimestamp(release["time_stamp"]).strftime('%Y-%m-%d')
             chapter_key = (chapter_num, 'Dilar')
             team_name = "Dilar"
