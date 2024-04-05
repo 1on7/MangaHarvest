@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from typing import Optional
 from pydantic import BaseModel
-from MangaSite import gmanga, aresnov, mangaSpark
+from MangaSite import gmanga, aresnov, dilar
 from utils import mangaUpdate
 from config import database
 from schema import schemas
@@ -45,7 +45,7 @@ async def add_manga(upload_data: UploadData, request: Request):
         if info_gmanga != "not found":
             gmanga_last_chapter = info_gmanga.get('latest_chapter')
             if gmanga_last_chapter > max_last_chapter:
-                max_last_chapter = aresnov_last_chapter
+                max_last_chapter = gmanga_last_chapter
                 selected_info = info_gmanga
                 manga_web = 'gmanga'
                 print(manga_web)
@@ -65,13 +65,13 @@ async def add_manga(upload_data: UploadData, request: Request):
                 manga_found = True
 
         # Try getting manga info from mangaSpark
-        info_mangaspark = await mangaSpark.mangaspark_search(name)
-        if info_mangaspark != "not found":
-            mangaSpark_last_chapter = info_mangaspark.get('latest_chapter')
-            if mangaSpark_last_chapter >= max_last_chapter:
-                max_last_chapter = mangaSpark_last_chapter
-                selected_info = info_mangaspark
-                manga_web = 'mangaspark'
+        info_dilar = await dilar.dilar_info(name)
+        if info_dilar != "not found":
+            dilar_last_chapter = info_dilar.get('latest_chapter')
+            if dilar_last_chapter >= max_last_chapter:
+                max_last_chapter = dilar_last_chapter
+                selected_info = info_dilar
+                manga_web = 'dilar'
                 print(manga_web)
                 manga_found = True
 
@@ -83,8 +83,8 @@ async def add_manga(upload_data: UploadData, request: Request):
             title = str(info_aresnov.get('title'))
             chapters = aresnov.get_aresnov_chapters(title.replace(' ', '-'))
 
-        if manga_web == 'mangaspark':
-            chapters = await mangaSpark.mangaspark_chapters(selected_info.get('id'))
+        if manga_web == 'dilar':
+            chapters = await dilar.dilar_chapters(selected_info.get('id'), selected_info.get('title'))
 
         if manga_found:
             try:
@@ -93,7 +93,6 @@ async def add_manga(upload_data: UploadData, request: Request):
             except:
                 type, year, rate, categories, associated_titles, status = mangaUpdate.get_manga_updates_data(
                     alternative_title)
-            selected_info['id'] = position
             selected_info.update({"year": year, "rate": round(rate, 1), "associated": associated_titles,
                                   "categories": categories, "status": status, "type": type})
 
