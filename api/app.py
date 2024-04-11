@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from typing import Optional
 from pydantic import BaseModel
-from MangaSite import gmanga, aresnov, dilar
+from MangaSite import gmanga, aresnov, dilar, asq, teamXnovel
 from utils import mangaUpdate
 from config import database
 from schema import schemas
@@ -74,6 +74,28 @@ async def add_manga(upload_data: UploadData, request: Request):
                 manga_web = 'dilar'
                 print(manga_web)
                 manga_found = True
+        
+        # Try getting manga info from mangaSpark
+        info_asq = await asq.asq_info(name)
+        if info_asq != "not found":
+            asq_last_chapter = info_asq.get('latest_chapter')
+            if asq_last_chapter >= max_last_chapter:
+                max_last_chapter = asq_last_chapter
+                selected_info = info_asq
+                manga_web = 'asq'
+                print(manga_web)
+                manga_found = True
+        
+        # Try getting manga info from mangaSpark
+        info_teamXnovel = await teamXnovel.teamXnovel_info(name)
+        if info_teamXnovel != "not found":
+            teamXnovel_last_chapter = info_teamXnovel.get('latest_chapter')
+            if teamXnovel_last_chapter >= max_last_chapter:
+                max_last_chapter = teamXnovel_last_chapter
+                selected_info = info_teamXnovel
+                manga_web = 'teamXnovel'
+                print(manga_web)
+                manga_found = True
 
         if manga_web == 'gmanga':
             chapters = await gmanga.gmanga_chapters(selected_info.get('post_url'))
@@ -85,12 +107,20 @@ async def add_manga(upload_data: UploadData, request: Request):
 
         if manga_web == 'dilar':
             chapters = await dilar.dilar_chapters(selected_info.get('id'), selected_info.get('title'))
+        
+        if manga_web == 'asq':
+            chapters = await asq.asq_chapters(selected_info.get('post_url'))
+            selected_info.pop('post_url')
+        
+        if manga_web == 'teamXnovel':
+            chapters = await teamXnovel.teamXnovel_chapters(selected_info.get('page_items'))
+            selected_info.pop('page_items')
 
         if manga_found:
             try:
                 type, year, rate, categories, associated_titles, status = mangaUpdate.get_manga_updates_data(
                     selected_info.get('title'))
-            except:
+            except manga_web == 'aresnov':
                 type, year, rate, categories, associated_titles, status = mangaUpdate.get_manga_updates_data(
                     alternative_title)
             selected_info.update({"year": year, "rate": round(rate, 1), "associated": associated_titles,
@@ -173,3 +203,9 @@ async def latest_manga():
         return schemas.list_mangaInfo(manga_info_list)
     else:
         return JSONResponse(content={"message": "Manga not found"}, status_code=404)
+
+
+# Run the FastAPI application with uvicorn
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=5000)
