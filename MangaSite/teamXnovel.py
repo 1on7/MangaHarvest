@@ -95,21 +95,8 @@ async def teamXnovel_info(name):
   soup = BeautifulSoup(response_text, 'html.parser')
   first_item = soup.find('li', class_='list-group-item')
   print(first_item)
-  title = first_item.find_all('a')[1].text
-  post_url = first_item.find('div', class_='image-parent').a['href']
-  img_url = first_item.find('img')['src'].strip()
-  info = await teamXnovel_summary(post_url)
-  description = info[0]
-  latest_chapter = first_item.find('span', class_='badge').text.strip()
-  pages = []
-  pages.append(post_url + '?page=1')
-  for page in info[1]:
-    pages.append(page)
-  if latest_chapter.isdigit():
-    latest_chapter = int(latest_chapter)
-  elif latest_chapter:
-    latest_chapter = float(latest_chapter)
-  return {"title": title, "summary": description, "cover": img_url, "id": 0, "latest_chapter": latest_chapter, 'page_items': pages}
+  
+  return response_text
 
 async def teamXnovel_chapter_imgs(chapter_url):
   response_text = await fetch(chapter_url)
