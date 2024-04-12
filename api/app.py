@@ -115,7 +115,7 @@ async def add_manga(upload_data: UploadData, request: Request):
                     selected_info.get('title'))
             except:
                 type, year, rate, categories, associated_titles, status = mangaUpdate.get_manga_updates_data(
-                    alternative_title)
+                    'Solo leveling')
             selected_info.update({"year": year, "rate": round(rate, 1), "associated": associated_titles,
                                   "categories": categories, "status": status, "type": type})
 
