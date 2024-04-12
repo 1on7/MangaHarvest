@@ -74,13 +74,13 @@ def get_aresnov_info(name):
         try:
             data = response.json()
             series = data.get("series", [])
-            if series:
-                series = series[0]['all'][0]
-                post_image = series.get("post_image")
-                post_title = series.get("post_title")
-                post_link = series.get("post_link")
-                post_latest = series.get("post_latest")
-                post_id = series.get("ID")
+            if series:  # Check if the list is not empty
+                serie = series[0]
+                post_image = serie.get("post_image")
+                post_title = serie.get("post_title")
+                post_link = serie.get("post_link")
+                post_latest = serie.get("post_latest")
+                post_id = serie.get("ID")
                 info = get_aresnov_summary(post_link)
                 summary = info[3]
                 alternative_title = info[4]
@@ -88,8 +88,6 @@ def get_aresnov_info(name):
                 return {"title": post_title, "summary": summary, "cover": post_image, "id": post_id, "latest_chapter": int(post_latest), "alternative_title": alternative_title}
             else:
                 return "not found"
-        except json.JSONDecodeError:
-            return "Error decoding JSON response."
     else:
         return "Request failed with status code:", response.status_code
 
