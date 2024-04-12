@@ -113,7 +113,7 @@ async def add_manga(upload_data: UploadData, request: Request):
             try:
                 type, year, rate, categories, associated_titles, status = mangaUpdate.get_manga_updates_data(
                     selected_info.get('title'))
-            except manga_web == 'aresnov':
+            except:
                 type, year, rate, categories, associated_titles, status = mangaUpdate.get_manga_updates_data(
                     alternative_title)
             selected_info.update({"year": year, "rate": round(rate, 1), "associated": associated_titles,
