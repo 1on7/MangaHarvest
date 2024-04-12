@@ -166,4 +166,3 @@ def get_aresnov_chapters(name):
         # If the request was unsuccessful, return None
         print("Error:", response.status_code)
         return None
-print(get_aresnov_info('Solo leveling'))
