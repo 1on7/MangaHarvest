@@ -89,13 +89,10 @@ async def add_manga(upload_data: UploadData, request: Request):
         # Try getting manga info from mangaSpark
         info_teamXnovel = await teamXnovel.teamXnovel_info(name)
         if info_teamXnovel != "not found":
-            teamXnovel_last_chapter = info_teamXnovel.get('latest_chapter')
-            if teamXnovel_last_chapter >= max_last_chapter:
-                max_last_chapter = teamXnovel_last_chapter
-                selected_info = info_teamXnovel
-                manga_web = 'teamXnovel'
-                print(manga_web)
-                manga_found = True
+             selected_info = info_teamXnovel
+             manga_web = 'teamXnovel'
+             print(manga_web)
+             manga_found = True
 
         if manga_web == 'gmanga':
             chapters = await gmanga.gmanga_chapters(selected_info.get('post_url'))
@@ -113,8 +110,6 @@ async def add_manga(upload_data: UploadData, request: Request):
             selected_info.pop('post_url')
         
         if manga_web == 'teamXnovel':
-            chapters = await teamXnovel.teamXnovel_chapters(selected_info.get('page_items'))
-            selected_info.pop('page_items')
 
         if manga_found:
             try:
