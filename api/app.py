@@ -108,9 +108,7 @@ async def add_manga(upload_data: UploadData, request: Request):
         if manga_web == 'asq':
             chapters = await asq.asq_chapters(selected_info.get('post_url'))
             selected_info.pop('post_url')
-        
-        if manga_web == 'teamXnovel':
-
+            
         if manga_found:
             try:
                 type, year, rate, categories, associated_titles, status = mangaUpdate.get_manga_updates_data(
