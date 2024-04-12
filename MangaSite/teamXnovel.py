@@ -92,7 +92,7 @@ async def teamXnovel_info(name):
   response_text = await fetch(url, method='GET', headers=headers)
   # Parse the HTML content
   soup = BeautifulSoup(response_text, 'html.parser')
-  first_item = soup.find('ol', class_='list-group').find('li')
+  first_item = soup.find('li', class_='list-group-item')
   title = first_item.find_all('a')[1].text
   post_url = first_item.find('div', class_='image-parent').a['href']
   img_url = first_item.find('img')['src'].strip()
