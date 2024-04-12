@@ -91,12 +91,8 @@ async def teamXnovel_info(name):
 
   response_text = await fetch(url, method='GET', headers=headers)
   print(response_text)
-  # Parse the HTML content
-  soup = BeautifulSoup(response_text, 'html.parser')
-  first_item = soup.find('li', class_='list-group-item')
-  print(first_item)
   
-  return response_text
+  return {'respons': response_text}
 
 async def teamXnovel_chapter_imgs(chapter_url):
   response_text = await fetch(chapter_url)
