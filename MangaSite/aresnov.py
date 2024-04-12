@@ -1,3 +1,4 @@
+import asyncio
 import sys
 from os import path
 
@@ -69,10 +70,11 @@ def get_aresnov_info(name):
         "https://manhuascarlet.com/wp-admin/admin-ajax.php", data=payload)
 
     # Check if the request was successful
-    if response.status_code == 200:
+    if response.status_code == 200: 
         # Parse the JSON response
             data = response.json()
-            series = data.get("series", [])
+            series = data["series"][0]['all']
+            print(series)
             if series:  # Check if the list is not empty
                 serie = series[0]
                 post_image = serie.get("post_image")
@@ -164,3 +166,4 @@ def get_aresnov_chapters(name):
         # If the request was unsuccessful, return None
         print("Error:", response.status_code)
         return None
+print(get_aresnov_info('Solo leveling'))
