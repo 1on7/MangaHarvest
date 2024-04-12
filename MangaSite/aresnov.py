@@ -71,7 +71,6 @@ def get_aresnov_info(name):
     # Check if the request was successful
     if response.status_code == 200:
         # Parse the JSON response
-        try:
             data = response.json()
             series = data.get("series", [])
             if series:  # Check if the list is not empty
