@@ -90,7 +90,7 @@ async def asq_info(name):
     if response:
         # Extract information for the first manga
         manga_info = response['data']
-        if manga_info:
+        if response['success'] == 'true':
            manga_info = manga_info[0]
            # Extracted manga information
            title = manga_info['title']
