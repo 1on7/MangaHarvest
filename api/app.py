@@ -85,15 +85,7 @@ async def add_manga(upload_data: UploadData, request: Request):
                 manga_web = 'asq'
                 print(manga_web)
                 manga_found = True
-        
-        # Try getting manga info from mangaSpark
-        info_teamXnovel = await teamXnovel.teamXnovel_info(name)
-        if info_teamXnovel != "not found":
-             selected_info = info_teamXnovel
-             manga_web = 'teamXnovel'
-             print(manga_web)
-             manga_found = True
-
+       
         if manga_web == 'gmanga':
             chapters = await gmanga.gmanga_chapters(selected_info.get('post_url'))
             selected_info.pop('post_url')
