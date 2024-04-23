@@ -67,7 +67,7 @@ def get_aresnov_info(name):
 
     # Send a POST request to the specified URL
     response = scraper.post(
-        "https://manhuascarlet.com/wp-admin/admin-ajax.php", data=payload)
+        "https://scarmanga.com/wp-admin/admin-ajax.php", data=payload)
 
     # Check if the request was successful
     if response.status_code == 200: 
@@ -141,7 +141,7 @@ def get_aresnov_chapters(name):
     )
 
     # Make a request to the URL
-    response = scraper.get(f'https://manhuascarlet.com/series/{name}')
+    response = scraper.get(f'https://scarmanga.com/series/{name}')
 
     # Check if the request was successful
     if response.status_code == 200:
