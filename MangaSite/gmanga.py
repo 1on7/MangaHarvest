@@ -26,7 +26,7 @@ async def gmanga_search(name):
 
     response_text = await fetch(url, method='POST', data=payload)
     data = json.loads(response_text)
-    if data.get("success"):
+    if data.get("error"):
         print(data.get("success"))
 
     manga_list = data.get("data", [])
@@ -34,8 +34,10 @@ async def gmanga_search(name):
         manga = manga_list[0]
         title = manga.get("title")
         url = manga.get("url")
-    info = await gmanga_info(url)
-    return info
+        info = await gmanga_info(url)
+        return info
+    else:
+        return 'not found'
 
 async def gmanga_latest_chapters(post_url):
     url = f"{post_url}ajax/chapters/"
