@@ -1,6 +1,6 @@
 import os
 
-from pymongo import MongoClient
+from pymongo import ASCENDING, DESCENDING, MongoClient
 from pymongo.collection import Collection
 
 MONGO_URI = os.getenv("MONGO_URI")
@@ -19,6 +19,26 @@ collection_mamga_chapters = collection_manga_chapters
 
 
 def ensure_indexes():
-    """Create required indexes when the application is ready to use MongoDB."""
-    collection_manga_info.create_index("title", unique=True)
-    collection_manga_chapters.create_index("manga_id", unique=True)
+    """Create indexes used by reads, updates, and uniqueness checks."""
+    collection_manga_info.create_index(
+        [("title", ASCENDING)],
+        unique=True,
+        name="title_unique",
+    )
+    collection_manga_info.create_index(
+        [("latest_chapter", DESCENDING)],
+        name="latest_chapter_desc",
+    )
+    collection_manga_info.create_index(
+        [("updated_at", DESCENDING)],
+        name="updated_at_desc",
+    )
+    collection_manga_info.create_index(
+        [("last_checked_at", ASCENDING)],
+        name="last_checked_at_asc",
+    )
+    collection_manga_chapters.create_index(
+        [("manga_id", ASCENDING)],
+        unique=True,
+        name="manga_id_unique",
+    )
