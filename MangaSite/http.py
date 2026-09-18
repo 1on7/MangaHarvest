@@ -1,5 +1,5 @@
 import asyncio
-import json
+import json as json_lib
 from typing import Any, Dict, Optional
 
 import aiohttp
@@ -43,11 +43,24 @@ async def _fetch(
     raise RuntimeError(f"Request failed after retries: {url}") from last_error
 
 
-async def fetch_text(url: str, method: str = "GET", *, data: Any = None, headers=None) -> str:
+async def fetch_text(
+    url: str,
+    method: str = "GET",
+    *,
+    data: Any = None,
+    headers: Optional[Dict[str, str]] = None,
+) -> str:
     body, _, charset = await _fetch(url, method, data=data, headers=headers)
     return body.decode(charset or "utf-8", errors="replace")
 
 
-async def fetch_json(url: str, method: str = "GET", *, data: Any = None, json: Any = None, headers=None):
+async def fetch_json(
+    url: str,
+    method: str = "GET",
+    *,
+    data: Any = None,
+    json: Any = None,
+    headers: Optional[Dict[str, str]] = None,
+):
     body, _, _ = await _fetch(url, method, data=data, json=json, headers=headers)
-    return json.loads(body.decode("utf-8"))
+    return json_lib.loads(body.decode("utf-8"))
