@@ -44,7 +44,8 @@ def test_crud_info_chapters_update_delete(monkeypatch):
 
     response = client.put(f"/manga/{manga_id}", json={"summary": "Updated"})
     assert response.status_code == 200
-    assert info.find_one({"_id": manga_id if False else next(info.find({"title": "Solo Leveling"}))["_id"]})["summary"] == "Updated"
+    stored = info.find_one({"title": "Solo Leveling"})
+    assert stored["summary"] == "Updated"
 
     response = client.delete(f"/manga/{manga_id}")
     assert response.status_code == 200
