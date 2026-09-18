@@ -1,196 +1,206 @@
 import base64
-import sys
-from os import path
+import re
+from typing import Any, Dict, Optional
 
-sys.path.append(path.dirname(path.dirname(path.abspath(__file__))))
-from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
-from typing import Optional
-from pydantic import BaseModel
-from MangaSite import gmanga, aresnov, dilar, asq, teamXnovel
-from utils import mangaUpdate
+from bson import ObjectId
+from fastapi import FastAPI, HTTPException, Query
+from pydantic import BaseModel, Field
+
+from MangaSite import asq, aresnov, dilar, gmanga
 from config import database
 from schema import schemas
-from bson import ObjectId
+from utils import mangaUpdate
 
-app = FastAPI()
-
+app = FastAPI(title="MangaHarvest API", version="2.0.0")
 db = database
 
 
 class UploadData(BaseModel):
-    data: str  # Assuming the data will be received as a string
+    data: str = Field(..., description="Base64-encoded newline-separated manga names")
 
 
-# Create (POST) operation to add new manga
+NOT_FOUND = "not found"
+
+
+def object_id(value: str) -> ObjectId:
+    if not ObjectId.is_valid(value):
+        raise HTTPException(status_code=400, detail="Invalid manga id")
+    return ObjectId(value)
+
+
+def chapter_number(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return -1
+
+
+def clean_name(value: str) -> str:
+    return re.sub(r"\\s+", " ", value).strip()
+
+
+async def find_best_source(name: str):
+    candidates = []
+
+    info = await gmanga.gmanga_search(name)
+    if info != NOT_FOUND:
+        candidates.append((chapter_number(info.get("latest_chapter")), "gmanga", info))
+
+    info = aresnov.get_aresnov_info(name)
+    if info != NOT_FOUND:
+        info.pop("alternative_title", None)
+        candidates.append((chapter_number(info.get("latest_chapter")), "aresnov", info))
+
+    info = await dilar.dilar_info(name)
+    if info != NOT_FOUND:
+        candidates.append((chapter_number(info.get("latest_chapter")), "dilar", info))
+
+    info = await asq.asq_info(name)
+    if info != NOT_FOUND:
+        candidates.append((chapter_number(info.get("latest_chapter")), "asq", info))
+
+    if not candidates:
+        return None
+
+    return max(candidates, key=lambda item: item[0])
+
+
+async def fetch_chapters(source: str, info: Dict[str, Any]):
+    if source == "gmanga":
+        post_url = info.get("post_url")
+        if not post_url:
+            return []
+        chapters = await gmanga.gmanga_chapters(post_url)
+        info.pop("post_url", None)
+        return chapters
+
+    if source == "aresnov":
+        title = clean_name(str(info.get("title", ""))).replace(" ", "-")
+        return aresnov.get_aresnov_chapters(title) if title else []
+
+    if source == "dilar":
+        return await dilar.dilar_chapters(info.get("id"), info.get("title"))
+
+    if source == "asq":
+        post_url = info.get("post_url")
+        if not post_url:
+            return []
+        chapters = await asq.asq_chapters(post_url)
+        info.pop("post_url", None)
+        return chapters
+
+    return []
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok", "service": "MangaHarvest"}
+
+
 @app.post("/manga/add")
-async def add_manga(upload_data: UploadData, request: Request):
-    data = upload_data.data
-    # Decode the Base64-encoded data back to binary
-    decoded_data = base64.b64decode(data)
-    # Convert binary data to string
-    decoded_str = decoded_data.decode('utf-8')
-    # Split the string into individual names
-    names = decoded_str.split('\n')
+async def add_manga(upload_data: UploadData):
+    try:
+        decoded = base64.b64decode(upload_data.data, validate=True).decode("utf-8")
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid base64 UTF-8 payload") from exc
 
-    for position, name in enumerate(names):
-        print(name)
-        manga_found = False
-        max_last_chapter = -1
-        selected_info = None
-        manga_web = ''
-        
-        # Try getting manga info from gmanga
-        info_gmanga = await gmanga.gmanga_search(name)
-        if info_gmanga != "not found":
-            gmanga_last_chapter = info_gmanga.get('latest_chapter')
-            if gmanga_last_chapter > max_last_chapter:
-                max_last_chapter = gmanga_last_chapter
-                selected_info = info_gmanga
-                manga_web = 'gmanga'
-                print(manga_web)
-                manga_found = True
-                
-        # Try getting manga info from aresnov
-        info_aresnov = aresnov.get_aresnov_info(name)
-        if info_aresnov != "not found":
-            aresnov_last_chapter = info_aresnov.get('latest_chapter')
-            alternative_title = info_aresnov.get('alternative_title')
-            if aresnov_last_chapter >= max_last_chapter:
-                max_last_chapter = aresnov_last_chapter
-                info_aresnov.pop('alternative_title')
-                selected_info = info_aresnov
-                manga_web = 'aresnov'
-                print(manga_web)
-                manga_found = True
+    results = []
+    for raw_name in decoded.splitlines():
+        name = clean_name(raw_name)
+        if not name:
+            continue
 
-        # Try getting manga info from mangaSpark
-        info_dilar = await dilar.dilar_info(name)
-        if info_dilar != "not found":
-            dilar_last_chapter = info_dilar.get('latest_chapter')
-            if dilar_last_chapter >= max_last_chapter:
-                max_last_chapter = dilar_last_chapter
-                selected_info = info_dilar
-                manga_web = 'dilar'
-                print(manga_web)
-                manga_found = True
-        
-        # Try getting manga info from mangaSpark
-        info_asq = await asq.asq_info(name)
-        if info_asq != "not found":
-            asq_last_chapter = info_asq.get('latest_chapter')
-            if asq_last_chapter >= max_last_chapter:
-                max_last_chapter = asq_last_chapter
-                selected_info = info_asq
-                manga_web = 'asq'
-                print(manga_web)
-                manga_found = True
-       
-        if manga_web == 'gmanga':
-            chapters = await gmanga.gmanga_chapters(selected_info.get('post_url'))
-            selected_info.pop('post_url')
+        selected = await find_best_source(name)
+        if selected is None:
+            results.append({"name": name, "status": "not_found"})
+            continue
 
-        if manga_web == 'aresnov':
-            title = str(info_aresnov.get('title'))
-            chapters = aresnov.get_aresnov_chapters(title.replace(' ', '-'))
+        _, source, info = selected
+        chapters = await fetch_chapters(source, info)
 
-        if manga_web == 'dilar':
-            chapters = await dilar.dilar_chapters(selected_info.get('id'), selected_info.get('title'))
-        
-        if manga_web == 'asq':
-            chapters = await asq.asq_chapters(selected_info.get('post_url'))
-            selected_info.pop('post_url')
-            
-        if manga_found:
-            try:
-                type, year, rate, categories, associated_titles, status = mangaUpdate.get_manga_updates_data(
-                    selected_info.get('title'))
-            except:
-                type, year, rate, categories, associated_titles, status = mangaUpdate.get_manga_updates_data(
-                    'Solo leveling')
-            selected_info.update({"year": year, "rate": round(rate, 1), "associated": associated_titles,
-                                  "categories": categories, "status": status, "type": type})
+        try:
+            metadata = mangaUpdate.get_manga_updates_data(info.get("title", name))
+            manga_type, year, rate, categories, associated, status = metadata
+        except Exception:
+            manga_type, year, rate, categories, associated, status = "", None, None, [], [], ""
 
-            # Insert manga info into manga_collection
-            manga_insert_result = db.collection_mamga_info.insert_one(selected_info)
-            manga_id = str(manga_insert_result.inserted_id)
+        info.update({
+            "year": year,
+            "rate": round(rate, 1) if isinstance(rate, (int, float)) else rate,
+            "associated": associated or [],
+            "categories": categories or [],
+            "status": status or "",
+            "type": manga_type or "",
+        })
 
-            # Add manga ID to each chapter document before inserting
-            chapters_list = {"manga_id": manga_id, "chapters": chapters}
-            db.collection_mamga_chapters.insert_one(chapters_list)
+        existing = db.collection_mamga_info.find_one({"title": info.get("title")})
+        if existing:
+            results.append({"name": name, "status": "already_exists", "id": str(existing["_id"])})
+            continue
 
-    return JSONResponse(content=None, status_code=200)
+        inserted = db.collection_mamga_info.insert_one(info)
+        manga_id = str(inserted.inserted_id)
+        db.collection_mamga_chapters.insert_one({"manga_id": manga_id, "chapters": chapters})
+        results.append({"name": name, "status": "created", "id": manga_id, "source": source})
+
+    return {"results": results}
 
 
-# Info (GET) operation to get manga by id
 @app.get("/manga/")
 async def info_manga(manga_id: Optional[str] = Query(None)):
-    manga = db.collection_mamga_info.find_one({"_id": ObjectId(manga_id)})
-    # Convert ObjectId to string
-    if manga and "_id" in manga:
-        manga["_id"] = str(manga["_id"])
-        return schemas.mangaInfo(manga)
-    else:
-        return {"message": "Manga not found"}
+    if not manga_id:
+        raise HTTPException(status_code=400, detail="manga_id is required")
+
+    manga = db.collection_mamga_info.find_one({"_id": object_id(manga_id)})
+    if not manga:
+        raise HTTPException(status_code=404, detail="Manga not found")
+
+    manga["_id"] = str(manga["_id"])
+    return schemas.mangaInfo(manga)
+
 
 @app.get("/manga/chapters/{manga_id}")
 async def chapters_manga(manga_id: str):
-    manga = db.collection_mamga_chapters.find_one({"manga_id":manga_id})
-    # Convert ObjectId to string
-    if manga:
-        return schemas.mangaChapters(manga)
-    else:
+    manga = db.collection_mamga_chapters.find_one({"manga_id": manga_id})
+    if not manga:
         raise HTTPException(status_code=404, detail="Chapters not found")
+    return schemas.mangaChapters(manga)
 
-# search (GET) operation to search manga by name
+
 @app.get("/manga/search")
-async def search_manga(name: Optional[str] = Query(None)):
-    if name:
-        # Search for documents where the title contains the provided query string
-        manga_info_list = db.collection_mamga_info.find({"title": {"$regex": name, "$options": "i"}})
-        # Convert ObjectId to string and return manga info
-        manga_list = []
-        for manga in manga_info_list:
-            manga["_id"] = str(manga["_id"])
-            manga_list.append(manga)
-        if manga_list:
-            return schemas.list_mangaInfo(manga_list)
-        else:
-            return JSONResponse(content={"message": "Manga not found"}, status_code=404)
-    else:
-        return JSONResponse(content={"message": "Please provide a manga name to search for."}, status_code=400)
+async def search_manga(name: str = Query(..., min_length=1)):
+    escaped = re.escape(name.strip())
+    manga_list = []
+    for manga in db.collection_mamga_info.find({"title": {"$regex": escaped, "$options": "i"}}):
+        manga["_id"] = str(manga["_id"])
+        manga_list.append(manga)
+
+    if not manga_list:
+        raise HTTPException(status_code=404, detail="Manga not found")
+    return schemas.list_mangaInfo(manga_list)
 
 
-# Update (PUT) operation to edit manga by ID
-@app.put("/manga/{manga_id}")
-async def update_manga(manga_id: str, key: str, value: str):
-    manga_info = db.collection_mamga_info.find_one_and_update({"_id": ObjectId(manga_id)}, {"$set": {key: value}})
-    if str(manga_info["_id"]) == manga_id:
-        return {"message": "Manga updated successfully"}
-    raise HTTPException(status_code=404, detail="Manga not found")
-
-
-# Delete (DELETE) operation to delete manga by ID
 @app.delete("/manga/{manga_id}")
 async def delete_manga(manga_id: str):
-    manga_info = db.collection_mamga_info.find_one_and_delete({"_id": ObjectId(manga_id)})
-    if manga_info:
-        return {"message": "Manga deleted successfully"}
-    raise HTTPException(status_code=404, detail="Manga not found")
+    oid = object_id(manga_id)
+    result = db.collection_mamga_info.delete_one({"_id": oid})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Manga not found")
+
+    db.collection_mamga_chapters.delete_one({"manga_id": manga_id})
+    return {"message": "Manga deleted successfully"}
 
 
-# latest (GET) operation to get latest manga
 @app.get("/manga/latest")
 async def latest_manga():
-    manga_info_list = db.collection_mamga_info.find()
-    print(manga_info_list)
-    if manga_info_list:
-        return schemas.list_mangaInfo(manga_info_list)
-    else:
-        return JSONResponse(content={"message": "Manga not found"}, status_code=404)
+    manga_list = list(db.collection_mamga_info.find())
+    if not manga_list:
+        raise HTTPException(status_code=404, detail="Manga not found")
+    for manga in manga_list:
+        manga["_id"] = str(manga["_id"])
+    return schemas.list_mangaInfo(manga_list)
 
 
-# Run the FastAPI application with uvicorn
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=5000)
