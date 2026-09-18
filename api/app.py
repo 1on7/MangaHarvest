@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import re
 from typing import Any, Dict, Optional
@@ -40,30 +41,43 @@ def clean_name(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
-async def find_best_source(name: str):
-    candidates = []
-
-    info = await gmanga.gmanga_search(name)
-    if info != NOT_FOUND:
-        candidates.append((chapter_number(info.get("latest_chapter")), "gmanga", info))
-
-    info = aresnov.get_aresnov_info(name)
-    if info != NOT_FOUND:
-        info.pop("alternative_title", None)
-        candidates.append((chapter_number(info.get("latest_chapter")), "aresnov", info))
-
-    info = await dilar.dilar_info(name)
-    if info != NOT_FOUND:
-        candidates.append((chapter_number(info.get("latest_chapter")), "dilar", info))
-
-    info = await asq.asq_info(name)
-    if info != NOT_FOUND:
-        candidates.append((chapter_number(info.get("latest_chapter")), "asq", info))
-
-    if not candidates:
+def _candidate(result, source: str):
+    if not isinstance(result, dict) or result == NOT_FOUND:
         return None
+    return (chapter_number(result.get("latest_chapter")), source, result)
 
-    return max(candidates, key=lambda item: item[0])
+
+async def _safe_async_call(fn, *args):
+    try:
+        return await fn(*args)
+    except Exception:
+        return NOT_FOUND
+
+
+def _safe_sync_call(fn, *args):
+    try:
+        return fn(*args)
+    except Exception:
+        return NOT_FOUND
+
+
+async def find_best_source(name: str):
+    results = await asyncio.gather(
+        _safe_async_call(gmanga.gmanga_search, name),
+        asyncio.to_thread(_safe_sync_call, aresnov.get_aresnov_info, name),
+        _safe_async_call(dilar.dilar_info, name),
+        _safe_async_call(asq.asq_info, name),
+    )
+
+    candidates = []
+    for result, source in zip(results, ("gmanga", "aresnov", "dilar", "asq")):
+        candidate = _candidate(result, source)
+        if candidate:
+            if source == "aresnov":
+                candidate[2].pop("alternative_title", None)
+            candidates.append(candidate)
+
+    return max(candidates, key=lambda item: item[0]) if candidates else None
 
 
 async def fetch_chapters(source: str, info: Dict[str, Any]):
@@ -73,14 +87,14 @@ async def fetch_chapters(source: str, info: Dict[str, Any]):
             return []
         chapters = await gmanga.gmanga_chapters(post_url)
         info.pop("post_url", None)
-        return chapters
+        return chapters or []
 
     if source == "aresnov":
         title = clean_name(str(info.get("title", ""))).replace(" ", "-")
-        return aresnov.get_aresnov_chapters(title) if title else []
+        return await asyncio.to_thread(aresnov.get_aresnov_chapters, title) if title else []
 
     if source == "dilar":
-        return await dilar.dilar_chapters(info.get("id"), info.get("title"))
+        return await dilar.dilar_chapters(info.get("id"), info.get("title")) or []
 
     if source == "asq":
         post_url = info.get("post_url")
@@ -88,7 +102,7 @@ async def fetch_chapters(source: str, info: Dict[str, Any]):
             return []
         chapters = await asq.asq_chapters(post_url)
         info.pop("post_url", None)
-        return chapters
+        return chapters or []
 
     return []
 
@@ -156,9 +170,12 @@ async def add_manga(upload_data: UploadData):
             continue
 
         _, source, info = selected
-        chapters = await fetch_chapters(source, info) or []
+        chapters = await fetch_chapters(source, info)
 
-        metadata = mangaUpdate.get_manga_updates_data(info.get("title", name))
+        metadata = await asyncio.to_thread(
+            mangaUpdate.get_manga_updates_data,
+            info.get("title", name),
+        )
         if metadata:
             manga_type, year, rate, categories, associated, status = metadata
         else:
