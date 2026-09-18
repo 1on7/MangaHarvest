@@ -180,6 +180,30 @@ async def search_manga(name: str = Query(..., min_length=1)):
     return schemas.list_mangaInfo(manga_list)
 
 
+class MangaUpdate(BaseModel):
+    summary: Optional[str] = None
+    cover: Optional[str] = None
+    year: Optional[int] = None
+    rate: Optional[float] = None
+    status: Optional[str] = None
+    type: Optional[str] = None
+
+
+@app.put("/manga/{manga_id}")
+async def update_manga(manga_id: str, update: MangaUpdate):
+    changes = update.model_dump(exclude_none=True)
+    if not changes:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    result = db.collection_mamga_info.update_one(
+        {"_id": object_id(manga_id)},
+        {"$set": changes},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Manga not found")
+    return {"message": "Manga updated successfully"}
+
+
 @app.delete("/manga/{manga_id}")
 async def delete_manga(manga_id: str):
     oid = object_id(manga_id)
