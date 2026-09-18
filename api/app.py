@@ -156,7 +156,7 @@ async def fetch_chapters(source: str, info: Dict[str, Any]):
     if source == "aresnov":
         title = clean_name(str(info.get("title", ""))).replace(" ", "-")
         return (
-            await asyncio.to_thread(aresnov.get_aresnov_chapters, title)
+        await asyncio.to_thread(aresnov.get_aresnov_chapters, title)
             if title
             else []
         )
@@ -237,33 +237,28 @@ async def update_manga_library(limit: int = 25):
 
 
 async def _update_one_manga(document):
-    results = []
-    for _ in (0,):
-        manga_id = str(document["_id"])
-        title = clean_name(str(document.get("title") or ""))
-        if not title:
-            continue
+    manga_id = str(document["_id"])
+    title = clean_name(str(document.get("title") or ""))
+    if not title:
+        return {"id": manga_id, "title": title, "status": "invalid_title"}
 
-        try:
-            selected = await find_best_source(title)
+    try:
+        selected = await find_best_source(title)
             if selected is None:
-                results.append({"id": manga_id, "title": title, "status": "source_not_found"})
-                continue
+            return {"id": manga_id, "title": title, "status": "source_not_found"}
 
-            _, source_latest, source, info = selected
-            stored_latest = chapter_number(document.get("latest_chapter"))
+        _, source_latest, source, info = selected
+        stored_latest = chapter_number(document.get("latest_chapter"))
 
             if source_latest >= 0 and stored_latest >= source_latest:
-                results.append({"id": manga_id, "title": title, "status": "up_to_date", "latest_chapter": stored_latest})
-                continue
+            return {"id": manga_id, "title": title, "status": "up_to_date", "latest_chapter": stored_latest}
 
-            chapters = normalize_chapters(await fetch_chapters(source, info))
+        chapters = normalize_chapters(await fetch_chapters(source, info))
             if not chapters:
-                results.append({"id": manga_id, "title": title, "status": "no_chapters"})
-                continue
+            return {"id": manga_id, "title": title, "status": "no_chapters"}
 
-            latest = max(chapter_number(item.get("chapter")) for item in chapters)
-            now = datetime.now(timezone.utc)
+        latest = max(chapter_number(item.get("chapter")) for item in chapters)
+        now = datetime.now(timezone.utc)
 
             await asyncio.to_thread(
                 db.collection_mamga_chapters.update_one,
@@ -271,18 +266,18 @@ async def _update_one_manga(document):
                 {"$set": {"chapters": chapters, "updated_at": now}},
                 upsert=True,
             )
-            await asyncio.to_thread(
-                db.collection_mamga_info.update_one,
+        await asyncio.to_thread(
+            db.collection_mamga_info.update_one,
                 {"_id": document["_id"]},
                 {"$set": {"latest_chapter": latest, "updated_at": now, "source": source}},
             )
 
-            results.append({"id": manga_id, "title": title, "status": "updated", "latest_chapter": latest, "chapters": len(chapters)})
-        except Exception:
-            logger.exception("Automatic update failed for manga=%s", title)
-            results.append({"id": manga_id, "title": title, "status": "error"})
+        return {"id": manga_id, "title": title, "status": "updated", "latest_chapter": latest, "chapters": len(chapters)}
+    except Exception:
+        logger.exception("Automatic update failed for manga=%s", title)
+        return {"id": manga_id, "title": title, "status": "error"}
 
-    return results[0] if results else {"status": "error"}
+
 
 
 @app.post("/api/v1/admin/update")
