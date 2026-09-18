@@ -17,3 +17,8 @@ collection_manga_chapters: Collection = db["chapters"]
 # Backward-compatible aliases for the existing API.
 collection_mamga_info = collection_manga_info
 collection_mamga_chapters = collection_manga_chapters
+
+
+# Indexes used by the API for common lookups.
+collection_manga_info.create_index("title")
+collection_manga_chapters.create_index("manga_id")
