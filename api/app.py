@@ -156,7 +156,7 @@ async def fetch_chapters(source: str, info: Dict[str, Any]):
     if source == "aresnov":
         title = clean_name(str(info.get("title", ""))).replace(" ", "-")
         return (
-        await asyncio.to_thread(aresnov.get_aresnov_chapters, title)
+            await asyncio.to_thread(aresnov.get_aresnov_chapters, title)
             if title
             else []
         )
