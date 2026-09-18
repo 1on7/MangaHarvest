@@ -139,3 +139,45 @@ def find_chapter_gaps(chapters: list | None, *, start: int = 1) -> list[int]:
 def find_missing_chapters(chapters: list | None, *, start: int = 1) -> list[int]:
     """Backward-compatible alias for chapter gap detection."""
     return find_chapter_gaps(chapters, start=start)
+
+
+def validate_chapter(chapter: dict) -> tuple[bool, list[str]]:
+    """Validate basic chapter/team integrity before persistence."""
+    errors: list[str] = []
+    if not isinstance(chapter, dict):
+        return False, ["chapter must be an object"]
+
+    if chapter_number(chapter.get("chapter")) is None:
+        errors.append("invalid chapter number")
+
+    teams = chapter.get("teams") or []
+    if isinstance(teams, dict):
+        teams = [teams]
+    if not isinstance(teams, list):
+        errors.append("teams must be a list")
+        return not errors, errors
+
+    seen: set[str] = set()
+    for team in teams:
+        if not isinstance(team, dict):
+            errors.append("team must be an object")
+            continue
+        name = normalize_team_name(team.get("team_name"))
+        if not name:
+            errors.append("team name is empty")
+            continue
+        key = name.casefold()
+        if key in seen:
+            errors.append(f"duplicate team: {name}")
+        seen.add(key)
+
+        pages = team.get("chapter_page") or []
+        if not isinstance(pages, list):
+            errors.append(f"pages must be a list for team: {name}")
+            continue
+        if not pages:
+            errors.append(f"no pages for team: {name}")
+        elif any(not str(page).strip() for page in pages):
+            errors.append(f"empty page URL for team: {name}")
+
+    return not errors, errors
