@@ -12,6 +12,7 @@ from MangaSite import asq, aresnov, dilar, gmanga
 from config import database
 from schema import schemas
 from utils import mangaUpdate
+from utils.title import title_similarity
 
 app = FastAPI(title="MangaHarvest API", version="2.0.0")
 db = database
@@ -41,10 +42,14 @@ def clean_name(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
-def _candidate(result, source: str):
+def _candidate(result, source: str, query: str):
     if not isinstance(result, dict) or result == NOT_FOUND:
         return None
-    return (chapter_number(result.get("latest_chapter")), source, result)
+    title = str(result.get("title") or "")
+    similarity = title_similarity(query, title)
+    if similarity < 0.35:
+        return None
+    return (similarity, chapter_number(result.get("latest_chapter")), source, result)
 
 
 async def _safe_async_call(fn, *args):
@@ -71,13 +76,13 @@ async def find_best_source(name: str):
 
     candidates = []
     for result, source in zip(results, ("gmanga", "aresnov", "dilar", "asq")):
-        candidate = _candidate(result, source)
+        candidate = _candidate(result, source, name)
         if candidate:
             if source == "aresnov":
                 candidate[2].pop("alternative_title", None)
             candidates.append(candidate)
 
-    return max(candidates, key=lambda item: item[0]) if candidates else None
+    return max(candidates, key=lambda item: (item[0], item[1])) if candidates else None
 
 
 async def fetch_chapters(source: str, info: Dict[str, Any]):
@@ -169,7 +174,7 @@ async def add_manga(upload_data: UploadData):
             results.append({"name": name, "status": "not_found"})
             continue
 
-        _, source, info = selected
+        _, _, source, info = selected
         chapters = await fetch_chapters(source, info)
 
         metadata = await asyncio.to_thread(
