@@ -6,7 +6,7 @@ from bson import ObjectId
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from MangaSite import asq, aresnov, dilar, gmanga, teamXnovel
+from MangaSite import asq, aresnov, dilar, gmanga, teamXnovel, teamXnovel
 from config import database
 from schema import schemas
 from utils import mangaUpdate
@@ -145,6 +145,7 @@ async def add_manga(upload_data: UploadData):
             results.append({"name": name, "status": "already_exists", "id": str(existing["_id"])})
             continue
 
+        info.pop("post_url", None)
         info.pop("post_url", None)
         inserted = db.collection_mamga_info.insert_one(info)
         manga_id = str(inserted.inserted_id)
