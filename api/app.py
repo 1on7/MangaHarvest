@@ -5,8 +5,9 @@ from typing import Any, Dict, Optional
 from bson import ObjectId
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
+from pymongo.errors import DuplicateKeyError
 
-from MangaSite import asq, aresnov, dilar, gmanga, teamXnovel, teamXnovel
+from MangaSite import asq, aresnov, dilar, gmanga
 from config import database
 from schema import schemas
 from utils import mangaUpdate
@@ -36,7 +37,7 @@ def chapter_number(value: Any) -> float:
 
 
 def clean_name(value: str) -> str:
-    return re.sub(r"\\s+", " ", value).strip()
+    return re.sub(r"\s+", " ", value).strip()
 
 
 async def find_best_source(name: str):
@@ -58,9 +59,6 @@ async def find_best_source(name: str):
     info = await asq.asq_info(name)
     if info != NOT_FOUND:
         candidates.append((chapter_number(info.get("latest_chapter")), "asq", info))
-
-    # TeamXnovel currently exposes search data but not a stable normalized
-    # metadata contract, so it is intentionally not used for source selection yet.
 
     if not candidates:
         return None
@@ -95,6 +93,45 @@ async def fetch_chapters(source: str, info: Dict[str, Any]):
     return []
 
 
+def update_manga_documents(title: str, info: Dict[str, Any], chapters: list):
+    info = dict(info)
+    info.pop("post_url", None)
+
+    existing = db.collection_mamga_info.find_one({"title": title}, {"_id": 1})
+    if existing:
+        manga_id = str(existing["_id"])
+        db.collection_mamga_info.update_one(
+            {"_id": existing["_id"]},
+            {"$set": info},
+        )
+        db.collection_mamga_chapters.update_one(
+            {"manga_id": manga_id},
+            {"$set": {"chapters": chapters}},
+            upsert=True,
+        )
+        return manga_id, "updated"
+
+    try:
+        inserted = db.collection_mamga_info.insert_one(info)
+        manga_id = str(inserted.inserted_id)
+    except DuplicateKeyError:
+        existing = db.collection_mamga_info.find_one({"title": title}, {"_id": 1})
+        if not existing:
+            raise
+        manga_id = str(existing["_id"])
+        db.collection_mamga_info.update_one(
+            {"_id": existing["_id"]},
+            {"$set": info},
+        )
+
+    db.collection_mamga_chapters.update_one(
+        {"manga_id": manga_id},
+        {"$set": {"chapters": chapters}},
+        upsert=True,
+    )
+    return manga_id, "created"
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "MangaHarvest"}
@@ -119,14 +156,12 @@ async def add_manga(upload_data: UploadData):
             continue
 
         _, source, info = selected
-        chapters = await fetch_chapters(source, info)
-        if chapters is None:
-            chapters = []
+        chapters = await fetch_chapters(source, info) or []
 
-        try:
-            metadata = mangaUpdate.get_manga_updates_data(info.get("title", name))
+        metadata = mangaUpdate.get_manga_updates_data(info.get("title", name))
+        if metadata:
             manga_type, year, rate, categories, associated, status = metadata
-        except Exception:
+        else:
             manga_type, year, rate, categories, associated, status = "", None, None, [], [], ""
 
         info.update({
@@ -140,17 +175,19 @@ async def add_manga(upload_data: UploadData):
 
         title = clean_name(str(info.get("title") or name))
         info["title"] = title
-        existing = db.collection_mamga_info.find_one({"title": title})
-        if existing:
-            results.append({"name": name, "status": "already_exists", "id": str(existing["_id"])})
-            continue
 
-        info.pop("post_url", None)
-        info.pop("post_url", None)
-        inserted = db.collection_mamga_info.insert_one(info)
-        manga_id = str(inserted.inserted_id)
-        db.collection_mamga_chapters.insert_one({"manga_id": manga_id, "chapters": chapters})
-        results.append({"name": name, "status": "created", "id": manga_id, "source": source})
+        try:
+            manga_id, status = update_manga_documents(title, info, chapters)
+        except DuplicateKeyError as exc:
+            raise HTTPException(status_code=409, detail="Manga already exists") from exc
+
+        results.append({
+            "name": name,
+            "status": status,
+            "id": manga_id,
+            "source": source,
+            "chapters": len(chapters),
+        })
 
     return {"results": results}
 
