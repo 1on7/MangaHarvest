@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 import logging
+import os
 
 logger = logging.getLogger("mangaharvest")
 
@@ -211,6 +212,86 @@ def update_manga_documents(title: str, info: Dict[str, Any], chapters: list):
     )
     return manga_id, "created"
 
+
+
+
+def _all_manga_documents(limit: int):
+    return list(
+        db.collection_mamga_info.find(
+            {},
+            {"_id": 1, "title": 1, "latest_chapter": 1},
+        ).sort("_id", 1).limit(limit)
+    )
+
+
+async def update_manga_library(limit: int = 25):
+    documents = await asyncio.to_thread(_all_manga_documents, limit)
+    results = []
+
+    for document in documents:
+        manga_id = str(document["_id"])
+        title = clean_name(str(document.get("title") or ""))
+        if not title:
+            continue
+
+        try:
+            selected = await find_best_source(title)
+            if selected is None:
+                results.append({"id": manga_id, "title": title, "status": "source_not_found"})
+                continue
+
+            _, source_latest, source, info = selected
+            stored_latest = chapter_number(document.get("latest_chapter"))
+
+            if source_latest >= 0 and stored_latest >= source_latest:
+                results.append({"id": manga_id, "title": title, "status": "up_to_date", "latest_chapter": stored_latest})
+                continue
+
+            chapters = normalize_chapters(await fetch_chapters(source, info))
+            if not chapters:
+                results.append({"id": manga_id, "title": title, "status": "no_chapters"})
+                continue
+
+            latest = max(chapter_number(item.get("chapter")) for item in chapters)
+            now = datetime.now(timezone.utc)
+
+            await asyncio.to_thread(
+                db.collection_mamga_chapters.update_one,
+                {"manga_id": manga_id},
+                {"$set": {"chapters": chapters, "updated_at": now}},
+                upsert=True,
+            )
+            await asyncio.to_thread(
+                db.collection_mamga_info.update_one,
+                {"_id": document["_id"]},
+                {"$set": {"latest_chapter": latest, "updated_at": now, "source": source}},
+            )
+
+            results.append({"id": manga_id, "title": title, "status": "updated", "latest_chapter": latest, "chapters": len(chapters)})
+        except Exception:
+            logger.exception("Automatic update failed for manga=%s", title)
+            results.append({"id": manga_id, "title": title, "status": "error"})
+
+    return results
+
+
+@app.post("/api/v1/admin/update")
+async def admin_update(
+    limit: int = Query(25, ge=1, le=100),
+    token: Optional[str] = Query(None),
+):
+    expected_token = os.getenv("ADMIN_UPDATE_TOKEN")
+    if not expected_token or token != expected_token:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    results = await update_manga_library(limit)
+    return {
+        "processed": len(results),
+        "updated": sum(item["status"] == "updated" for item in results),
+        "up_to_date": sum(item["status"] == "up_to_date" for item in results),
+        "errors": sum(item["status"] == "error" for item in results),
+        "results": results,
+    }
 
 @app.get("/health")
 async def health():
