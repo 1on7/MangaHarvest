@@ -12,9 +12,10 @@ import os
 logger = logging.getLogger("mangaharvest")
 
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from bson import ObjectId
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from pymongo.errors import DuplicateKeyError
 
@@ -59,8 +60,7 @@ async def rate_limit_middleware(request, call_next):
     _rate_limit[client_ip] = (window_start, count)
 
     if count > RATE_LIMIT_REQUESTS:
-        from fastapi.responses import JSONResponse
-        return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"}, headers={"Retry-After": str(max(1, int(RATE_LIMIT_WINDOW - (now - window_start))))})
+        return JSONResponse(status_code=429, content={"success": False, "error": {"status": 429, "message": "Rate limit exceeded", "path": request.url.path}}, headers={"Retry-After": str(max(1, int(RATE_LIMIT_WINDOW - (now - window_start))))})
 
     response = await call_next(request)
     response.headers["X-RateLimit-Limit"] = str(RATE_LIMIT_REQUESTS)
@@ -68,7 +68,23 @@ async def rate_limit_middleware(request, call_next):
     return response
 
 
-app.add_middleware(
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "success": False,
+            "error": {
+                "status": exc.status_code,
+                "message": str(exc.detail),
+                "path": request.url.path,
+            },
+        },
+        headers=exc.headers,
+    )
+
+
+@app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
