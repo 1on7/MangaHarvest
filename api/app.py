@@ -4,6 +4,7 @@ import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
+import time
 
 import logging
 import os
@@ -44,6 +45,29 @@ app = FastAPI(
 )
 db = database
 
+@app.middleware("http")
+async def rate_limit_middleware(request, call_next):
+    if request.url.path == "/health":
+        return await call_next(request)
+
+    client_ip = request.headers.get("x-forwarded-for", request.client.host if request.client else "unknown").split(",")[0].strip()
+    now = time.monotonic()
+    window_start, count = _rate_limit.get(client_ip, (now, 0))
+    if now - window_start >= RATE_LIMIT_WINDOW:
+        window_start, count = now, 0
+    count += 1
+    _rate_limit[client_ip] = (window_start, count)
+
+    if count > RATE_LIMIT_REQUESTS:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"}, headers={"Retry-After": str(max(1, int(RATE_LIMIT_WINDOW - (now - window_start))))})
+
+    response = await call_next(request)
+    response.headers["X-RateLimit-Limit"] = str(RATE_LIMIT_REQUESTS)
+    response.headers["X-RateLimit-Remaining"] = str(max(0, RATE_LIMIT_REQUESTS - count))
+    return response
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -61,6 +85,9 @@ NOT_FOUND = "not found"
 SOURCE_CACHE = TTLCache(ttl_seconds=600, max_size=256)
 METADATA_CACHE = TTLCache(ttl_seconds=3600, max_size=512)
 UPDATE_CONCURRENCY = 4
+RATE_LIMIT_WINDOW = 60
+RATE_LIMIT_REQUESTS = 120
+_rate_limit: dict[str, tuple[float, int]] = {}
 
 
 def object_id(value: str) -> ObjectId:
@@ -463,13 +490,11 @@ async def chapters_manga(manga_id: str):
 
 def _search_manga_documents(name: str, skip: int, limit: int):
     regex = title_search_regex(name)
-    return list(
-        db.collection_mamga_info.find(
-            {"title": {"$regex": regex, "$options": "i"}}
-        )
-        .sort("title", 1)
-        .skip(skip)
-        .limit(limit)
+    query = {"title": {"$regex": regex, "$options": "i"}}
+    collection = db.collection_mamga_info
+    return (
+        list(collection.find(query).sort("title", 1).skip(skip).limit(limit)),
+        collection.count_documents(query),
     )
 
 
@@ -480,7 +505,7 @@ async def search_manga(
     limit: int = Query(20, ge=1, le=50),
 ):
     skip = (page - 1) * limit
-    manga_list = await asyncio.to_thread(
+    manga_list, total = await asyncio.to_thread(
         _search_manga_documents,
         name,
         skip,
@@ -497,6 +522,10 @@ async def search_manga(
         "page": page,
         "limit": limit,
         "count": len(manga_list),
+        "total": total,
+        "pages": (total + limit - 1) // limit,
+        "has_next": skip + len(manga_list) < total,
+        "has_previous": page > 1,
         "results": schemas.list_mangaInfo(manga_list),
     }
 
