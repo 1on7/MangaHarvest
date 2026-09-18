@@ -241,6 +241,11 @@ async def add_manga(upload_data: UploadData):
     return {"results": results}
 
 
+@app.get("/api/v1/manga/{manga_id}")
+async def info_manga_v1(manga_id: str):
+    return await info_manga(manga_id)
+
+
 @app.get("/manga/")
 async def info_manga(manga_id: Optional[str] = Query(None)):
     if not manga_id:
@@ -255,6 +260,11 @@ async def info_manga(manga_id: Optional[str] = Query(None)):
 
     manga["_id"] = str(manga["_id"])
     return schemas.mangaInfo(manga)
+
+
+@app.get("/api/v1/manga/{manga_id}/chapters")
+async def chapters_manga_v1(manga_id: str):
+    return await chapters_manga(manga_id)
 
 
 @app.get("/manga/chapters/{manga_id}")
@@ -278,6 +288,15 @@ def _search_manga_documents(name: str, skip: int, limit: int):
         .skip(skip)
         .limit(limit)
     )
+
+
+@app.get("/api/v1/manga/search")
+async def search_manga_v1(
+    name: str = Query(..., min_length=1, max_length=100),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=50),
+):
+    return await search_manga(name=name, page=page, limit=limit)
 
 
 @app.get("/manga/search")
@@ -357,6 +376,14 @@ def _latest_manga_documents(skip: int, limit: int):
         .skip(skip)
         .limit(limit)
     )
+
+
+@app.get("/api/v1/manga/latest")
+async def latest_manga_v1(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=50),
+):
+    return await latest_manga(page=page, limit=limit)
 
 
 @app.get("/manga/latest")
