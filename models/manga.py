@@ -5,8 +5,11 @@ from pydantic import BaseModel, Field
 
 class ChapterTeam(BaseModel):
     team_name: str
-    chapter_date: str
+    chapter_date: str = ""
     chapter_page: List[str] = Field(default_factory=list)
+    source: str = ""
+    verification_status: str = "unverified"
+    last_verified_at: Optional[str] = None
 
 
 class MangaInfo(BaseModel):
