@@ -161,6 +161,11 @@ def validate_chapter(chapter: dict) -> tuple[bool, list[str]]:
         errors.append("teams must be a list")
         return not errors, errors
 
+    # A chapter may temporarily have no teams when a source exposes chapter
+    # numbers separately from page data. Keep it for later enrichment.
+    if not teams:
+        return True, []
+
     seen: set[str] = set()
     for team in teams:
         if not isinstance(team, dict):
