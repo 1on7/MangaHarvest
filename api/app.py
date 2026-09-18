@@ -3,6 +3,8 @@ import base64
 import re
 from typing import Any, Dict, Optional
 
+from fastapi.middleware.cors import CORSMiddleware
+
 from bson import ObjectId
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -22,6 +24,8 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 db = database
+
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["GET", "POST", "PUT", "DELETE"], allow_headers=["*"])
 
 
 class UploadData(BaseModel):
@@ -164,16 +168,20 @@ async def health():
 
 @app.post("/manga/add")
 async def add_manga(upload_data: UploadData):
+    if len(upload_data.data) > 2_000_000:
+        raise HTTPException(status_code=413, detail="Payload is too large")
     try:
         decoded = base64.b64decode(upload_data.data, validate=True).decode("utf-8")
     except (ValueError, UnicodeDecodeError) as exc:
         raise HTTPException(status_code=400, detail="Invalid base64 UTF-8 payload") from exc
 
+    names = [clean_name(value) for value in decoded.splitlines()]
+    names = [value for value in names if value]
+    if len(names) > 100:
+        raise HTTPException(status_code=413, detail="Maximum 100 manga names per request")
+
     results = []
-    for raw_name in decoded.splitlines():
-        name = clean_name(raw_name)
-        if not name:
-            continue
+    for name in names:
 
         selected = await find_best_source(name)
         if selected is None:
@@ -205,7 +213,7 @@ async def add_manga(upload_data: UploadData):
         info["title"] = title
 
         try:
-            manga_id, status = update_manga_documents(title, info, chapters)
+            manga_id, status = await asyncio.to_thread(update_manga_documents, title, info, chapters)
         except DuplicateKeyError as exc:
             raise HTTPException(status_code=409, detail="Manga already exists") from exc
 
@@ -225,7 +233,7 @@ async def info_manga(manga_id: Optional[str] = Query(None)):
     if not manga_id:
         raise HTTPException(status_code=400, detail="manga_id is required")
 
-    manga = db.collection_mamga_info.find_one({"_id": object_id(manga_id)})
+    manga = await asyncio.to_thread(db.collection_mamga_info.find_one, {"_id": object_id(manga_id)})
     if not manga:
         raise HTTPException(status_code=404, detail="Manga not found")
 
@@ -235,7 +243,7 @@ async def info_manga(manga_id: Optional[str] = Query(None)):
 
 @app.get("/manga/chapters/{manga_id}")
 async def chapters_manga(manga_id: str):
-    manga = db.collection_mamga_chapters.find_one({"manga_id": manga_id})
+    manga = await asyncio.to_thread(db.collection_mamga_chapters.find_one, {"manga_id": manga_id})
     if not manga:
         raise HTTPException(status_code=404, detail="Chapters not found")
     return schemas.mangaChapters(manga)
@@ -282,7 +290,7 @@ async def update_manga(manga_id: str, update: MangaUpdate):
     if not changes:
         raise HTTPException(status_code=400, detail="No fields to update")
 
-    result = db.collection_mamga_info.update_one(
+    result = await asyncio.to_thread(db.collection_mamga_info.update_one,
         {"_id": object_id(manga_id)},
         {"$set": changes},
     )
@@ -294,11 +302,11 @@ async def update_manga(manga_id: str, update: MangaUpdate):
 @app.delete("/manga/{manga_id}")
 async def delete_manga(manga_id: str):
     oid = object_id(manga_id)
-    result = db.collection_mamga_info.delete_one({"_id": oid})
+    result = await asyncio.to_thread(db.collection_mamga_info.delete_one, {"_id": oid})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Manga not found")
 
-    db.collection_mamga_chapters.delete_one({"manga_id": manga_id})
+    await asyncio.to_thread(db.collection_mamga_chapters.delete_one, {"manga_id": manga_id})
     return {"message": "Manga deleted successfully"}
 
 
