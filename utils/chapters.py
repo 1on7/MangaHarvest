@@ -104,3 +104,23 @@ def merge_chapters(existing: list | None, incoming: list | None) -> list:
                 old["chapter_page"] = team["chapter_page"]
 
     return sorted(merged.values(), key=lambda item: float(item["chapter"]))
+
+
+
+def find_missing_chapters(chapters: list | None, *, start: int = 1) -> list[int]:
+    """Return integer chapter gaps between the lowest and highest chapters.
+
+    Special/decimal chapters are ignored because a gap such as 10.5 is not
+    evidence that a numbered chapter is missing.
+    """
+    normalized = normalize_chapters(chapters)
+    numbers = {
+        int(item["chapter"])
+        for item in normalized
+        if isinstance(item.get("chapter"), int) and item["chapter"] >= start
+    }
+    if len(numbers) < 2:
+        return []
+
+    highest = max(numbers)
+    return [number for number in range(start, highest + 1) if number not in numbers]
