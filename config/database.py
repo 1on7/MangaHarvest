@@ -17,6 +17,8 @@ collection_manga_chapters: Collection = db["chapters"]
 collection_mamga_info = collection_manga_info
 collection_mamga_chapters = collection_manga_chapters
 
-# Prevent duplicate manga titles and speed up common lookups.
-collection_manga_info.create_index("title", unique=True)
-collection_manga_chapters.create_index("manga_id", unique=True)
+
+def ensure_indexes():
+    """Create required indexes when the application is ready to use MongoDB."""
+    collection_manga_info.create_index("title", unique=True)
+    collection_manga_chapters.create_index("manga_id", unique=True)
