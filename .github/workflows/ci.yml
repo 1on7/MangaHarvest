@@ -38,4 +38,4 @@ jobs:
         run: |
           test -n "$API_URL"
           test -n "$UPDATE_TOKEN"
-          curl --fail --silent --show-error --max-time 300             -X POST             "$API_URL/api/v1/admin/update?limit=25&token=$UPDATE_TOKEN"
+          curl --fail --silent --show-error --max-time 300             -X POST             -H "Authorization: Bearer $UPDATE_TOKEN"             "$API_URL/api/v1/admin/update?limit=25"
