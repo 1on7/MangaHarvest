@@ -42,3 +42,17 @@ def test_normalize_chapters_ignores_invalid_entries():
             "chapter_page": ["page.jpg"],
         }],
     }]
+
+
+from utils.chapters import merge_chapters
+
+
+def test_merge_chapters_preserves_existing_and_adds_new_teams():
+    result = merge_chapters(
+        [{"chapter": 10, "teams": [{"team_name": "Team A", "chapter_date": "old", "chapter_page": ["old.jpg"]}]}],
+        [{"chapter": 10, "teams": [{"team_name": "Team A", "chapter_date": "new", "chapter_page": []}, {"team_name": "Team B", "chapter_date": "new", "chapter_page": ["b.jpg"]}]}, {"chapter": 11, "teams": []}],
+    )
+    assert [item["chapter"] for item in result] == [10, 11]
+    assert result[0]["teams"][0]["chapter_date"] == "new"
+    assert result[0]["teams"][0]["chapter_page"] == ["old.jpg"]
+    assert result[0]["teams"][1]["team_name"] == "Team B"
