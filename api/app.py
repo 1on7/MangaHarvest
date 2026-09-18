@@ -14,7 +14,13 @@ from schema import schemas
 from utils import mangaUpdate
 from utils.title import title_similarity
 
-app = FastAPI(title="MangaHarvest API", version="2.0.0")
+app = FastAPI(
+    title="MangaHarvest API",
+    version="2.1.0",
+    description="Asynchronous manga metadata and chapter aggregation API.",
+    docs_url="/docs",
+    redoc_url="/redoc",
+)
 db = database
 
 
@@ -236,16 +242,29 @@ async def chapters_manga(manga_id: str):
 
 
 @app.get("/manga/search")
-async def search_manga(name: str = Query(..., min_length=1)):
+async def search_manga(
+    name: str = Query(..., min_length=1, max_length=100),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=50),
+):
     escaped = re.escape(name.strip())
+    skip = (page - 1) * limit
     manga_list = []
-    for manga in db.collection_mamga_info.find({"title": {"$regex": escaped, "$options": "i"}}):
+    cursor = db.collection_mamga_info.find(
+        {"title": {"$regex": escaped, "$options": "i"}}
+    ).sort("title", 1).skip(skip).limit(limit)
+    for manga in cursor:
         manga["_id"] = str(manga["_id"])
         manga_list.append(manga)
 
     if not manga_list:
         raise HTTPException(status_code=404, detail="Manga not found")
-    return schemas.list_mangaInfo(manga_list)
+    return {
+        "page": page,
+        "limit": limit,
+        "count": len(manga_list),
+        "results": schemas.list_mangaInfo(manga_list),
+    }
 
 
 class MangaUpdate(BaseModel):
@@ -284,13 +303,27 @@ async def delete_manga(manga_id: str):
 
 
 @app.get("/manga/latest")
-async def latest_manga():
-    manga_list = list(db.collection_mamga_info.find())
+async def latest_manga(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=50),
+):
+    skip = (page - 1) * limit
+    manga_list = list(
+        db.collection_mamga_info.find()
+        .sort("_id", -1)
+        .skip(skip)
+        .limit(limit)
+    )
     if not manga_list:
         raise HTTPException(status_code=404, detail="Manga not found")
     for manga in manga_list:
         manga["_id"] = str(manga["_id"])
-    return schemas.list_mangaInfo(manga_list)
+    return {
+        "page": page,
+        "limit": limit,
+        "count": len(manga_list),
+        "results": schemas.list_mangaInfo(manga_list),
+    }
 
 
 if __name__ == "__main__":
