@@ -1,168 +1,120 @@
-import asyncio
+import re
 import sys
 from os import path
 
+import cloudscraper
 from bs4 import BeautifulSoup
+
 sys.path.append(path.dirname(path.dirname(path.abspath(__file__))))
 
-import re
-import time
-from utils import date, mangaUpdate
-import json
-import cloudscraper
+from utils import date
+
+
+BASE_URL = "https://scarmanga.com"
+
+
+def _scraper():
+    return cloudscraper.create_scraper(browser={"browser": "firefox", "platform": "windows", "mobile": False})
+
+
+def _get(scraper, url):
+    response = scraper.get(url, timeout=20)
+    response.raise_for_status()
+    return response.text
+
 
 def get_aresnov_summary(post_url):
-    # Create a cloudscraper session
-    scraper = cloudscraper.create_scraper(
-        browser={
-            'browser': 'firefox',
-            'platform': 'windows',
-            'mobile': False
-        }
-    )
+    try:
+        html = _get(_scraper(), post_url)
+        soup = BeautifulSoup(html, "html.parser")
+        alternative = soup.select_one("span.alternative")
+        description = soup.select_one(".description")
+        return (
+            None,
+            None,
+            None,
+            description.get_text(" ", strip=True) if description else "",
+            alternative.get_text(" ", strip=True) if alternative else None,
+        )
+    except Exception:
+        return None, None, None, "", None
 
-    # Make a request to the URL
-    response = scraper.get(post_url)
-    html_content = response.text
-    
-    # Parse the HTML content
-    soup = BeautifulSoup(response.text, 'html.parser')
-    
-    # Find the span element with class="alternative" and extract its text
-    alternative_span = soup.find('span', class_='alternative')
-    
-    # Check if alternative_span is not None before accessing its text
-    alternative_title = alternative_span.text.strip() if alternative_span else None
-
-    # Extract information using regex
-    release_date_match = re.search(r'تاريخ الإصدار <i>(.*?)</i>', html_content)
-    release_date = release_date_match.group(1) if release_date_match else None
-
-    author_match = re.search(r'المؤلف <i>(.*?)</i>', html_content)
-    author = author_match.group(1) if author_match else None
-
-    artist_match = re.search(r'الرسام <i>(.*?)</i>', html_content)
-    artist = artist_match.group(1) if artist_match else None
-    
-    description_match = re.search(r'description">.*>(.*?)<\/p>', html_content)
-    description = description_match.group(1).strip() if description_match else None
-
-    return release_date, author, artist, description, alternative_title
 
 def get_aresnov_info(name):
-    # Create a CloudScraper instance
-    scraper = cloudscraper.create_scraper(
-        browser={
-            'browser': 'firefox',
-            'platform': 'windows',
-            'mobile': False
+    try:
+        scraper = _scraper()
+        response = scraper.post(
+            f"{BASE_URL}/wp-admin/admin-ajax.php",
+            data={"action": "ts_ac_do_search", "ts_ac_query": name},
+            timeout=20,
+        )
+        response.raise_for_status()
+        data = response.json()
+        series = ((data.get("series") or [{}])[0]).get("all") or []
+        if not series:
+            return "not found"
+        item = series[0]
+        post_url = item.get("post_link")
+        if not post_url:
+            return "not found"
+        info = get_aresnov_summary(post_url)
+        try:
+            latest = float(item.get("post_latest", 0))
+            if latest.is_integer():
+                latest = int(latest)
+        except (ValueError, TypeError):
+            latest = 0
+        return {
+            "title": item.get("post_title", name),
+            "summary": info[3],
+            "cover": item.get("post_image", ""),
+            "id": item.get("ID"),
+            "latest_chapter": latest,
+            "alternative_title": info[4],
+            "post_url": post_url,
         }
-    )
+    except Exception:
+        return "not found"
 
-    # Define the request payload
-    payload = {
-        "action": "ts_ac_do_search",
-        "ts_ac_query": name
-    }
-
-    # Send a POST request to the specified URL
-    response = scraper.post(
-        "https://scarmanga.com/wp-admin/admin-ajax.php", data=payload)
-
-    # Check if the request was successful
-    if response.status_code == 200: 
-        # Parse the JSON response
-            data = response.json()
-            series = data["series"][0]['all']
-            print(series)
-            if series:  # Check if the list is not empty
-                serie = series[0]
-                post_image = serie.get("post_image")
-                post_title = serie.get("post_title")
-                post_link = serie.get("post_link")
-                post_latest = serie.get("post_latest")
-                post_id = serie.get("ID")
-                info = get_aresnov_summary(post_link)
-                summary = info[3]
-                alternative_title = info[4]
-
-                return {"title": post_title, "summary": summary, "cover": post_image, "id": post_id, "latest_chapter": int(post_latest), "alternative_title": alternative_title}
-            else:
-                return "not found"
-    else:
-        return "Request failed with status code:", response.status_code
-
-# Call the function to scrape manhuascarlet.com
 
 def aresnov_chapter_imgs(url):
-    # Create a cloudscraper session
-    scraper = cloudscraper.create_scraper(
-        browser={
-            'browser': 'firefox',
-            'platform': 'windows',
-            'mobile': False
-        }
-    )
-
-    # Make a request to the URL
-    response = scraper.get(url)
-
-    # Check if the request was successful
-    if response.status_code == 200:
-        html = response.text
-
-        # Regex pattern to match image URLs
-        pattern = r'<img decoding="async" src="(.*?)" alt=".*?>'
-
-        # Find all matches of the pattern
-        matches = re.findall(pattern, html)
-
-        # Create a list to store image URLs
+    try:
+        html = _get(_scraper(), url)
+        soup = BeautifulSoup(html, "html.parser")
         images = []
-
-        # Add each image URL to the list
-        for match in matches:
-            images.append(match)
-
+        for image in soup.select("img[decoding='async'][src], .reading-content img[src]"):
+            src = image.get("src")
+            if src and src not in images:
+                images.append(src.strip())
         return images
-    else:
-        # If the request was unsuccessful, return None
-        print("Error:", response.status_code)
-        return None
+    except Exception:
+        return []
+
 
 def get_aresnov_chapters(name):
-    # Create a cloudscraper session
-    scraper = cloudscraper.create_scraper(
-        browser={
-            'browser': 'firefox',
-            'platform': 'windows',
-            'mobile': False
-        }
-    )
-
-    # Make a request to the URL
-    response = scraper.get(f'https://scarmanga.com/series/{name}')
-
-    # Check if the request was successful
-    if response.status_code == 200:
-        html = response.text
-        # Regex pattern to match the chapter number and URL
-        pattern = r'<a.href="(.*?)">\s*<span class="chapternum">الفصل (\d+)<\/span>\s*<span class="chapterdate">(.*?)<\/span>\s*<\/a>\s*<\/div>\s*<\/div>\s*<\/li>'
-        matches = re.findall(pattern, html)
-
+    try:
+        html = _get(_scraper(), f"{BASE_URL}/series/{name}")
+        soup = BeautifulSoup(html, "html.parser")
         chapters_info = {}
-
-        for match in matches:
-            # Extract chapter URL
-            chapter_url = match[0]
-            # Extract chapter number
-            chapter_num = match[1]
-            chapter_date = date.convert_arabic_date_to_numeric(match[2])
-            chapter_key = (chapter_num, 'Aresnov')
-            team_name = "Aresnov"
-            chapters_info[chapter_key] = {"chapter": chapter_num, "teams": [{"team_name": team_name, "chapter_date": chapter_date, "chapter_page": aresnov_chapter_imgs(chapter_url)}]}
+        for link in soup.select("a[href]"):
+            number_node = link.select_one(".chapternum")
+            date_node = link.select_one(".chapterdate")
+            if not number_node:
+                continue
+            match = re.search(r"\d+(?:\.\d+)?", number_node.get_text(" ", strip=True))
+            if not match:
+                continue
+            chapter_num = float(match.group())
+            if chapter_num.is_integer():
+                chapter_num = int(chapter_num)
+            chapter_url = link.get("href")
+            if not chapter_url:
+                continue
+            release_date = date.convert_arabic_date_to_numeric(date_node.get_text(" ", strip=True)) if date_node else ""
+            chapters_info[(chapter_num, "Aresnov")] = {
+                "chapter": chapter_num,
+                "teams": [{"team_name": "Aresnov", "chapter_date": release_date, "chapter_page": aresnov_chapter_imgs(chapter_url)}],
+            }
         return list(chapters_info.values())
-    else:
-        # If the request was unsuccessful, return None
-        print("Error:", response.status_code)
+    except Exception:
         return None
