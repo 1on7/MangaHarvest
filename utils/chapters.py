@@ -112,11 +112,12 @@ def merge_chapters(existing: list | None, incoming: list | None) -> list:
 
 
 
-def find_missing_chapters(chapters: list | None, *, start: int = 1) -> list[int]:
-    """Return integer chapter gaps between the lowest and highest chapters.
+def find_chapter_gaps(chapters: list | None, *, start: int = 1) -> list[int]:
+    """Return integer chapter gaps without claiming they are truly missing.
 
-    Special/decimal chapters are ignored because a gap such as 10.5 is not
-    evidence that a numbered chapter is missing.
+    A gap can be intentional or can exist on a source that has incomplete
+    chapter data, so callers should treat these as unverified gaps.
+    Special/decimal chapters are ignored.
     """
     normalized = normalize_chapters(chapters)
     numbers = {
@@ -129,3 +130,8 @@ def find_missing_chapters(chapters: list | None, *, start: int = 1) -> list[int]
 
     highest = max(numbers)
     return [number for number in range(start, highest + 1) if number not in numbers]
+
+
+def find_missing_chapters(chapters: list | None, *, start: int = 1) -> list[int]:
+    """Backward-compatible alias for chapter gap detection."""
+    return find_chapter_gaps(chapters, start=start)
