@@ -194,7 +194,18 @@ async def fetch_verified_chapters(name: str):
         _, _, source, _ = candidate
         if isinstance(result, Exception) or not result:
             continue
-        merged = merge_chapters(merged, result)
+        tagged = []
+        for chapter in result:
+            if not isinstance(chapter, dict):
+                continue
+            chapter_copy = dict(chapter)
+            chapter_copy["teams"] = [
+                {**team, "source": source}
+                for team in (chapter.get("teams") or [])
+                if isinstance(team, dict)
+            ]
+            tagged.append(chapter_copy)
+        merged = merge_chapters(merged, tagged)
         successful_sources.append(source)
 
     return candidates[0], merged, successful_sources
