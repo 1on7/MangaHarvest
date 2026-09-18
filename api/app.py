@@ -201,7 +201,11 @@ async def fetch_verified_chapters(name: str):
                 continue
             chapter_copy = dict(chapter)
             chapter_copy["teams"] = [
-                {**team, "source": source}
+                {
+                    **team,
+                    "source": source,
+                    "verification_status": "verified",
+                }
                 for team in (chapter.get("teams") or [])
                 if isinstance(team, dict)
             ]
@@ -376,6 +380,12 @@ async def _update_one_manga(document):
         chapters = merge_chapters(existing_chapters, incoming_chapters)
         latest = max(normalized_chapter_number(item.get("chapter")) for item in chapters)
         unverified_gaps = find_chapter_gaps(chapters)
+
+        # Chapters returned by at least one matching source are verified.
+        # Existing chapters that remain untouched keep their previous state.
+        for chapter in chapters:
+            for team in chapter.get("teams", []):
+                team.setdefault("verification_status", "verified")
 
         await asyncio.to_thread(
             db.collection_mamga_chapters.update_one,
