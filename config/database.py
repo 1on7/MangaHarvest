@@ -1,18 +1,19 @@
+import os
+
 from pymongo import MongoClient
-import sys
-from os import path
-import ssl
+from pymongo.collection import Collection
 
-sys.path.append(path.dirname(path.dirname(path.abspath(__file__))))
-import base64
-from schema import schemas
-from bson import ObjectId
-import asyncio
+MONGO_URI = os.getenv("MONGO_URI")
 
-client = MongoClient("mongodb+srv://alihussaindev963:n1W7TM0iLY2bAzGf@cluster0.eg0fzso.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
+if not MONGO_URI:
+    raise RuntimeError("MONGO_URI is not configured")
 
-db = client.manga_db
+client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+db = client["manga_db"]
 
-collection_mamga_info = db["info"]
+collection_manga_info: Collection = db["info"]
+collection_manga_chapters: Collection = db["chapters"]
 
-collection_mamga_chapters = db["chapters"]
+# Backward-compatible aliases for the existing API.
+collection_mamga_info = collection_manga_info
+collection_mamga_chapters = collection_manga_chapters
