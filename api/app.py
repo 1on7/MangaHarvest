@@ -21,7 +21,7 @@ from MangaSite import asq, aresnov, dilar, gmanga
 from config import database
 from schema import schemas
 from utils import mangaUpdate
-from utils.chapters import normalize_chapters
+from utils.chapters import chapter_number as normalized_chapter_number, normalize_chapters
 from utils.cache import TTLCache
 from utils.title import title_similarity
 
@@ -262,7 +262,7 @@ async def _update_one_manga(document):
         if not chapters:
             return {"id": manga_id, "title": title, "status": "no_chapters"}
 
-        latest = max(chapter_number(item.get("chapter")) for item in chapters)
+        latest = max(normalized_chapter_number(item.get("chapter")) for item in chapters)
         now = datetime.now(timezone.utc)
 
         await asyncio.to_thread(
