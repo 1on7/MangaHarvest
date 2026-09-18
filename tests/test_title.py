@@ -21,3 +21,11 @@ def test_title_search_regex_is_safe_and_token_aware():
     from utils.title import title_search_regex
     assert title_search_regex("Solo Leveling") == "solo.*leveling"
     assert title_search_regex("[test]") == r"\\[test\\]"
+
+
+def test_title_similarity_rejects_single_word_partial_match():
+    assert title_similarity("Solo", "Solo Leveling") == 0.0
+
+
+def test_title_similarity_allows_multi_word_extension():
+    assert title_similarity("Solo Leveling", "Solo Leveling Ragnarok") > 0.90
