@@ -19,7 +19,7 @@ from fastapi import FastAPI, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from pymongo.errors import DuplicateKeyError
 
-from MangaSite import asq, aresnov, dilar, gmanga
+from MangaSite import asq, aresnov, dilar, gmanga, mangaSpark
 from config import database
 from schema import schemas
 from utils import mangaUpdate
@@ -155,9 +155,10 @@ async def find_source_candidates(name: str):
         asyncio.to_thread(_safe_sync_call, aresnov.get_aresnov_info, name),
         _safe_async_call(dilar.dilar_info, name),
         _safe_async_call(asq.asq_info, name),
+        _safe_async_call(mangaSpark.mangaspark_search, name),
     )
     candidates = []
-    for result, source in zip(results, ("gmanga", "aresnov", "dilar", "asq")):
+    for result, source in zip(results, ("gmanga", "aresnov", "dilar", "asq", "mangaspark")):
         candidate = _candidate(result, source, name)
         if candidate:
             candidates.append(candidate)
@@ -250,6 +251,10 @@ async def fetch_chapters(source: str, info: Dict[str, Any]):
         chapters = await asq.asq_chapters(post_url)
         info.pop("post_url", None)
         return chapters or []
+
+    if source == "mangaspark":
+        manga_id = info.get("id")
+        return await mangaSpark.mangaspark_chapters(manga_id) if manga_id else []
 
     return []
 
