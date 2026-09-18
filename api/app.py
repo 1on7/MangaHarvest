@@ -6,6 +6,8 @@ from typing import Any, Dict, Optional
 
 import logging
 
+logger = logging.getLogger("mangaharvest")
+
 from fastapi.middleware.cors import CORSMiddleware
 
 from bson import ObjectId
@@ -85,6 +87,7 @@ async def _safe_async_call(fn, *args):
     try:
         return await fn(*args)
     except Exception:
+        logger.exception("Async source call failed: %s", getattr(fn, "__name__", repr(fn)))
         return NOT_FOUND
 
 
@@ -92,6 +95,7 @@ def _safe_sync_call(fn, *args):
     try:
         return fn(*args)
     except Exception:
+        logger.exception("Sync source call failed: %s", getattr(fn, "__name__", repr(fn)))
         return NOT_FOUND
 
 
@@ -210,12 +214,21 @@ async def add_manga(upload_data: UploadData):
             continue
 
         _, _, source, info = selected
-        chapters = await fetch_chapters(source, info)
+        try:
+            chapters = await fetch_chapters(source, info)
+        except Exception:
+            logger.exception("Chapter fetch failed for source=%s title=%s", source, name)
+            chapters = []
 
-        metadata = await asyncio.to_thread(
-            mangaUpdate.get_manga_updates_data,
-            info.get("title", name),
-        )
+        try:
+            try:
+            metadata = await asyncio.to_thread(
+                mangaUpdate.get_manga_updates_data,
+                info.get("title", name),
+            )
+        except Exception:
+            logger.exception("Metadata enrichment failed for title=%s", name)
+            metadata = None
         if metadata:
             manga_type, year, rate, categories, associated, status = metadata
         else:
