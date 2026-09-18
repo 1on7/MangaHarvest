@@ -335,12 +335,37 @@ async def _update_one_manga(document):
 
         _, source_latest, source, info = selected
         stored_latest = chapter_number(document.get("latest_chapter"))
-        if source_latest >= 0 and stored_latest >= source_latest:
-            await asyncio.to_thread(db.collection_mamga_info.update_one, {"_id": document["_id"]}, {"$set": {"source": source, "last_checked_at": now, "last_update_status": "up_to_date"}})
-            return {"id": manga_id, "title": title, "status": "up_to_date", "latest_chapter": stored_latest, "missing_chapters": [], "unverified_gaps": []}
 
-        existing_doc = await asyncio.to_thread(db.collection_mamga_chapters.find_one, {"manga_id": manga_id}, {"chapters": 1})
+        # If the primary source has no newer chapter, still verify only when
+        # the library has known unverified gaps. This lets another source fill
+        # a gap without forcing a full refresh for every up-to-date manga.
+        existing_doc = await asyncio.to_thread(
+            db.collection_mamga_chapters.find_one,
+            {"manga_id": manga_id},
+            {"chapters": 1},
+        )
         existing_chapters = normalize_chapters((existing_doc or {}).get("chapters") or [])
+        known_gaps = document.get("unverified_gaps") or []
+
+        if source_latest >= 0 and stored_latest >= source_latest and not known_gaps:
+            await asyncio.to_thread(
+                db.collection_mamga_info.update_one,
+                {"_id": document["_id"]},
+                {"$set": {
+                    "source": source,
+                    "last_checked_at": now,
+                    "last_update_status": "up_to_date",
+                }},
+            )
+            return {
+                "id": manga_id,
+                "title": title,
+                "status": "up_to_date",
+                "latest_chapter": stored_latest,
+                "missing_chapters": [],
+                "unverified_gaps": [],
+            }
+
         verified_selected, incoming_chapters, sources = await fetch_verified_chapters(title)
         if verified_selected:
             _, _, source, _ = verified_selected
