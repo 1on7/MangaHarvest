@@ -5,25 +5,37 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
 
 jobs:
   test:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
-
       - name: Install dependencies
         run: pip install -r requirements.txt
-
       - name: Run tests
         env:
           MONGO_URI: mongodb://localhost:27017/test
         run: pytest -q
+
+  update-manga:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger MangaHarvest updater
+        env:
+          API_URL: ${{ secrets.MANGAHARVEST_API_URL }}
+          UPDATE_TOKEN: ${{ secrets.MANGAHARVEST_UPDATE_TOKEN }}
+        run: |
+          test -n "$API_URL"
+          test -n "$UPDATE_TOKEN"
+          curl --fail --silent --show-error --max-time 300             -X POST             "$API_URL/api/v1/admin/update?limit=25&token=$UPDATE_TOKEN"
