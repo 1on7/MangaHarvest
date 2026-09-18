@@ -1,29 +1,34 @@
 from datetime import datetime
+import re
+import unicodedata
+
+ARABIC_MONTHS = {
+    "يناير": "January", "فبراير": "February", "مارس": "March",
+    "أبريل": "April", "ابريل": "April", "مايو": "May",
+    "يونيو": "June", "يونيو": "June", "يوليو": "July",
+    "أغسطس": "August", "اغسطس": "August", "سبتمبر": "September",
+    "أكتوبر": "October", "اكتوبر": "October", "نوفمبر": "November",
+    "ديسمبر": "December",
+}
+
+ARABIC_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
+
 
 def convert_arabic_date_to_numeric(date_str):
-    # Mapping of Arabic month names to English
-    arabic_months = {
-        'يناير': 'January',
-        'فبراير': 'February',
-        'مارس': 'March',
-        'أبريل': 'April',
-        'مايو': 'May',
-        'يونيو': 'June',
-        'يوليو': 'July',
-        'أغسطس': 'August',
-        'سبتمبر': 'September',
-        'أكتوبر': 'October',
-        'نوفمبر': 'November',
-        'ديسمبر': 'December'
-    }
+    if not date_str:
+        return ""
 
-    # Replace Arabic month names with English
-    for arabic_month, english_month in arabic_months.items():
-        date_str = date_str.replace(arabic_month, english_month)
-    try:
-        # Parse the date string into a datetime object
-        date_obj = datetime.strptime(date_str, '%B %d, %Y').strftime('%Y-%m-%d')
-        return date_obj
-    except:
-        date_obj = datetime.strptime(date_str, '%d %B %Y').strftime('%Y-%m-%d')
-        return date_obj
+    value = unicodedata.normalize("NFKC", str(date_str)).translate(ARABIC_DIGITS)
+    value = value.replace("،", ",").strip()
+    value = re.sub(r"\s+", " ", value)
+
+    for arabic_month, english_month in ARABIC_MONTHS.items():
+        value = value.replace(arabic_month, english_month)
+
+    for fmt in ("%B %d, %Y", "%d %B %Y", "%B %d %Y", "%d %B, %Y"):
+        try:
+            return datetime.strptime(value, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+
+    return ""
