@@ -18,14 +18,20 @@ from utils.title import title_similarity
 
 app = FastAPI(
     title="MangaHarvest API",
-    version="2.1.0",
+    version="2.1.1",
     description="Asynchronous manga metadata and chapter aggregation API.",
     docs_url="/docs",
     redoc_url="/redoc",
 )
 db = database
 
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["GET", "POST", "PUT", "DELETE"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["*"],
+)
 
 
 class UploadData(BaseModel):
@@ -88,8 +94,6 @@ async def find_best_source(name: str):
     for result, source in zip(results, ("gmanga", "aresnov", "dilar", "asq")):
         candidate = _candidate(result, source, name)
         if candidate:
-            if source == "aresnov":
-                candidate[2].pop("alternative_title", None)
             candidates.append(candidate)
 
     return max(candidates, key=lambda item: (item[0], item[1])) if candidates else None
@@ -106,7 +110,11 @@ async def fetch_chapters(source: str, info: Dict[str, Any]):
 
     if source == "aresnov":
         title = clean_name(str(info.get("title", ""))).replace(" ", "-")
-        return await asyncio.to_thread(aresnov.get_aresnov_chapters, title) if title else []
+        return (
+            await asyncio.to_thread(aresnov.get_aresnov_chapters, title)
+            if title
+            else []
+        )
 
     if source == "dilar":
         return await dilar.dilar_chapters(info.get("id"), info.get("title")) or []
@@ -170,6 +178,7 @@ async def health():
 async def add_manga(upload_data: UploadData):
     if len(upload_data.data) > 2_000_000:
         raise HTTPException(status_code=413, detail="Payload is too large")
+
     try:
         decoded = base64.b64decode(upload_data.data, validate=True).decode("utf-8")
     except (ValueError, UnicodeDecodeError) as exc:
@@ -182,7 +191,6 @@ async def add_manga(upload_data: UploadData):
 
     results = []
     for name in names:
-
         selected = await find_best_source(name)
         if selected is None:
             results.append({"name": name, "status": "not_found"})
@@ -213,7 +221,12 @@ async def add_manga(upload_data: UploadData):
         info["title"] = title
 
         try:
-            manga_id, status = await asyncio.to_thread(update_manga_documents, title, info, chapters)
+            manga_id, status = await asyncio.to_thread(
+                update_manga_documents,
+                title,
+                info,
+                chapters,
+            )
         except DuplicateKeyError as exc:
             raise HTTPException(status_code=409, detail="Manga already exists") from exc
 
@@ -233,7 +246,10 @@ async def info_manga(manga_id: Optional[str] = Query(None)):
     if not manga_id:
         raise HTTPException(status_code=400, detail="manga_id is required")
 
-    manga = await asyncio.to_thread(db.collection_mamga_info.find_one, {"_id": object_id(manga_id)})
+    manga = await asyncio.to_thread(
+        db.collection_mamga_info.find_one,
+        {"_id": object_id(manga_id)},
+    )
     if not manga:
         raise HTTPException(status_code=404, detail="Manga not found")
 
@@ -243,10 +259,25 @@ async def info_manga(manga_id: Optional[str] = Query(None)):
 
 @app.get("/manga/chapters/{manga_id}")
 async def chapters_manga(manga_id: str):
-    manga = await asyncio.to_thread(db.collection_mamga_chapters.find_one, {"manga_id": manga_id})
+    manga = await asyncio.to_thread(
+        db.collection_mamga_chapters.find_one,
+        {"manga_id": manga_id},
+    )
     if not manga:
         raise HTTPException(status_code=404, detail="Chapters not found")
     return schemas.mangaChapters(manga)
+
+
+def _search_manga_documents(name: str, skip: int, limit: int):
+    escaped = re.escape(name.strip())
+    return list(
+        db.collection_mamga_info.find(
+            {"title": {"$regex": escaped, "$options": "i"}}
+        )
+        .sort("title", 1)
+        .skip(skip)
+        .limit(limit)
+    )
 
 
 @app.get("/manga/search")
@@ -255,18 +286,20 @@ async def search_manga(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=50),
 ):
-    escaped = re.escape(name.strip())
     skip = (page - 1) * limit
-    manga_list = []
-    cursor = db.collection_mamga_info.find(
-        {"title": {"$regex": escaped, "$options": "i"}}
-    ).sort("title", 1).skip(skip).limit(limit)
-    for manga in cursor:
-        manga["_id"] = str(manga["_id"])
-        manga_list.append(manga)
+    manga_list = await asyncio.to_thread(
+        _search_manga_documents,
+        name,
+        skip,
+        limit,
+    )
 
     if not manga_list:
         raise HTTPException(status_code=404, detail="Manga not found")
+
+    for manga in manga_list:
+        manga["_id"] = str(manga["_id"])
+
     return {
         "page": page,
         "limit": limit,
@@ -290,7 +323,8 @@ async def update_manga(manga_id: str, update: MangaUpdate):
     if not changes:
         raise HTTPException(status_code=400, detail="No fields to update")
 
-    result = await asyncio.to_thread(db.collection_mamga_info.update_one,
+    result = await asyncio.to_thread(
+        db.collection_mamga_info.update_one,
         {"_id": object_id(manga_id)},
         {"$set": changes},
     )
@@ -302,12 +336,27 @@ async def update_manga(manga_id: str, update: MangaUpdate):
 @app.delete("/manga/{manga_id}")
 async def delete_manga(manga_id: str):
     oid = object_id(manga_id)
-    result = await asyncio.to_thread(db.collection_mamga_info.delete_one, {"_id": oid})
+    result = await asyncio.to_thread(
+        db.collection_mamga_info.delete_one,
+        {"_id": oid},
+    )
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Manga not found")
 
-    await asyncio.to_thread(db.collection_mamga_chapters.delete_one, {"manga_id": manga_id})
+    await asyncio.to_thread(
+        db.collection_mamga_chapters.delete_one,
+        {"manga_id": manga_id},
+    )
     return {"message": "Manga deleted successfully"}
+
+
+def _latest_manga_documents(skip: int, limit: int):
+    return list(
+        db.collection_mamga_info.find()
+        .sort("_id", -1)
+        .skip(skip)
+        .limit(limit)
+    )
 
 
 @app.get("/manga/latest")
@@ -316,16 +365,18 @@ async def latest_manga(
     limit: int = Query(20, ge=1, le=50),
 ):
     skip = (page - 1) * limit
-    manga_list = list(
-        db.collection_mamga_info.find()
-        .sort("_id", -1)
-        .skip(skip)
-        .limit(limit)
+    manga_list = await asyncio.to_thread(
+        _latest_manga_documents,
+        skip,
+        limit,
     )
+
     if not manga_list:
         raise HTTPException(status_code=404, detail="Manga not found")
+
     for manga in manga_list:
         manga["_id"] = str(manga["_id"])
+
     return {
         "page": page,
         "limit": limit,
