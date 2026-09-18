@@ -1,17 +1,15 @@
 
-from pymongo.mongo_client import MongoClient
-from pymongo.server_api import ServerApi
+import os
+from pymongo import MongoClient
 
-from motor.motor_asyncio import AsyncIOMotorClient
+MONGO_URI = os.getenv("MONGO_URI")
 
-uri = "mongodb+srv://alihussaindev963:n1W7TM0iLY2bAzGf@cluster0.eg0fzso.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+if not MONGO_URI:
+    raise RuntimeError("MONGO_URI is not configured")
 
-# Create a new client and connect to the server
-client = AsyncIOMotorClient(uri, server_api=ServerApi('1'))
+client = MongoClient(MONGO_URI)
 
-# Send a ping to confirm a successful connection
-try:
-    client.admin.command('ping')
-    print("Pinged your deployment. You successfully connected to MongoDB!")
-except Exception as e:
-    print(e)
+db = client["manga_db"]
+
+info_collection = db["info"]
+chapters_collection = db["chapters"]
