@@ -4,7 +4,6 @@ from pymongo import MongoClient
 from pymongo.collection import Collection
 
 MONGO_URI = os.getenv("MONGO_URI")
-
 if not MONGO_URI:
     raise RuntimeError("MONGO_URI is not configured")
 
@@ -18,7 +17,6 @@ collection_manga_chapters: Collection = db["chapters"]
 collection_mamga_info = collection_manga_info
 collection_mamga_chapters = collection_manga_chapters
 
-
-# Indexes used by the API for common lookups.
-collection_manga_info.create_index("title")
-collection_manga_chapters.create_index("manga_id")
+# Prevent duplicate manga titles and speed up common lookups.
+collection_manga_info.create_index("title", unique=True)
+collection_manga_chapters.create_index("manga_id", unique=True)
