@@ -3,8 +3,6 @@ import unicodedata
 
 SEPARATORS = re.compile(r"[\s_\-:|/\\]+")
 NON_ALNUM = re.compile(r"[^\w]+", re.UNICODE)
-ROMAN_NUMERALS = re.compile(r"\b(?:ii|iii|iv|v|vi|vii|viii|ix|x)\b", re.IGNORECASE)
-
 
 def normalize_title(value: str) -> str:
     value = unicodedata.normalize("NFKC", value or "").casefold()
