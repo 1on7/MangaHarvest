@@ -24,13 +24,17 @@ def title_similarity(query: str, candidate: str) -> float:
         return 0.0
     if query_norm == candidate_norm:
         return 1.0
+    query_tokens = title_tokens(query)
+    candidate_tokens = title_tokens(candidate)
+
+    # A single-word title should not match a longer title merely because the
+    # word appears inside it (for example, "Solo" vs "Solo Leveling").
     if query_norm in candidate_norm or candidate_norm in query_norm:
+        if len(query_tokens) == 1 or len(candidate_tokens) == 1:
+            return 0.0
         shorter = min(len(query_norm), len(candidate_norm))
         longer = max(len(query_norm), len(candidate_norm))
         return 0.90 + (shorter / longer) * 0.05
-
-    query_tokens = title_tokens(query)
-    candidate_tokens = title_tokens(candidate)
     overlap = len(query_tokens & candidate_tokens)
     union = len(query_tokens | candidate_tokens)
     if not union:
