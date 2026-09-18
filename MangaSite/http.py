@@ -1,4 +1,5 @@
 import asyncio
+import json
 from typing import Any, Dict, Optional
 
 import aiohttp
@@ -49,4 +50,4 @@ async def fetch_text(url: str, method: str = "GET", *, data: Any = None, headers
 
 async def fetch_json(url: str, method: str = "GET", *, data: Any = None, json: Any = None, headers=None):
     body, _, _ = await _fetch(url, method, data=data, json=json, headers=headers)
-    return aiohttp.helpers.json_loads(body.decode("utf-8"))
+    return json.loads(body.decode("utf-8"))
