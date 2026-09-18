@@ -1,7 +1,10 @@
 import asyncio
 import base64
 import re
+from contextlib import asynccontextmanager
 from typing import Any, Dict, Optional
+
+import logging
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -16,12 +19,22 @@ from schema import schemas
 from utils import mangaUpdate
 from utils.title import title_similarity
 
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    try:
+        await asyncio.to_thread(db.ensure_indexes)
+    except Exception:
+        logging.getLogger(__name__).warning("MongoDB indexes could not be initialized", exc_info=True)
+    yield
+
+
 app = FastAPI(
     title="MangaHarvest API",
     version="2.1.1",
     description="Asynchronous manga metadata and chapter aggregation API.",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 db = database
 
