@@ -6,7 +6,7 @@ from bson import ObjectId
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from MangaSite import asq, aresnov, dilar, gmanga
+from MangaSite import asq, aresnov, dilar, gmanga, teamXnovel
 from config import database
 from schema import schemas
 from utils import mangaUpdate
@@ -58,6 +58,9 @@ async def find_best_source(name: str):
     info = await asq.asq_info(name)
     if info != NOT_FOUND:
         candidates.append((chapter_number(info.get("latest_chapter")), "asq", info))
+
+    # TeamXnovel currently exposes search data but not a stable normalized
+    # metadata contract, so it is intentionally not used for source selection yet.
 
     if not candidates:
         return None
@@ -117,6 +120,8 @@ async def add_manga(upload_data: UploadData):
 
         _, source, info = selected
         chapters = await fetch_chapters(source, info)
+        if chapters is None:
+            chapters = []
 
         try:
             metadata = mangaUpdate.get_manga_updates_data(info.get("title", name))
@@ -133,11 +138,14 @@ async def add_manga(upload_data: UploadData):
             "type": manga_type or "",
         })
 
-        existing = db.collection_mamga_info.find_one({"title": info.get("title")})
+        title = clean_name(str(info.get("title") or name))
+        info["title"] = title
+        existing = db.collection_mamga_info.find_one({"title": title})
         if existing:
             results.append({"name": name, "status": "already_exists", "id": str(existing["_id"])})
             continue
 
+        info.pop("post_url", None)
         inserted = db.collection_mamga_info.insert_one(info)
         manga_id = str(inserted.inserted_id)
         db.collection_mamga_chapters.insert_one({"manga_id": manga_id, "chapters": chapters})
