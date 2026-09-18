@@ -21,7 +21,7 @@ from MangaSite import asq, aresnov, dilar, gmanga
 from config import database
 from schema import schemas
 from utils import mangaUpdate
-from utils.chapters import chapter_number as normalized_chapter_number, normalize_chapters
+from utils.chapters import chapter_number as normalized_chapter_number, merge_chapters, normalize_chapters
 from utils.cache import TTLCache
 from utils.title import title_similarity
 
@@ -242,28 +242,28 @@ async def _update_one_manga(document):
     if not title:
         return {"id": manga_id, "title": title, "status": "invalid_title"}
 
+    now = datetime.now(timezone.utc)
     try:
         selected = await find_best_source(title)
         if selected is None:
+            await asyncio.to_thread(db.collection_mamga_info.update_one, {"_id": document["_id"]}, {"$set": {"last_checked_at": now, "last_update_status": "source_not_found"}})
             return {"id": manga_id, "title": title, "status": "source_not_found"}
 
         _, source_latest, source, info = selected
         stored_latest = chapter_number(document.get("latest_chapter"))
-
         if source_latest >= 0 and stored_latest >= source_latest:
-            return {
-                "id": manga_id,
-                "title": title,
-                "status": "up_to_date",
-                "latest_chapter": stored_latest,
-            }
+            await asyncio.to_thread(db.collection_mamga_info.update_one, {"_id": document["_id"]}, {"$set": {"source": source, "last_checked_at": now, "last_update_status": "up_to_date"}})
+            return {"id": manga_id, "title": title, "status": "up_to_date", "latest_chapter": stored_latest}
 
-        chapters = normalize_chapters(await fetch_chapters(source, info))
-        if not chapters:
+        existing_doc = await asyncio.to_thread(db.collection_mamga_chapters.find_one, {"manga_id": manga_id}, {"chapters": 1})
+        existing_chapters = normalize_chapters((existing_doc or {}).get("chapters") or [])
+        incoming_chapters = normalize_chapters(await fetch_chapters(source, info))
+        if not incoming_chapters:
+            await asyncio.to_thread(db.collection_mamga_info.update_one, {"_id": document["_id"]}, {"$set": {"source": source, "last_checked_at": now, "last_update_status": "no_chapters"}})
             return {"id": manga_id, "title": title, "status": "no_chapters"}
 
+        chapters = merge_chapters(existing_chapters, incoming_chapters)
         latest = max(normalized_chapter_number(item.get("chapter")) for item in chapters)
-        now = datetime.now(timezone.utc)
 
         await asyncio.to_thread(
             db.collection_mamga_chapters.update_one,
@@ -274,7 +274,7 @@ async def _update_one_manga(document):
         await asyncio.to_thread(
             db.collection_mamga_info.update_one,
             {"_id": document["_id"]},
-            {"$set": {"latest_chapter": latest, "updated_at": now, "source": source}},
+            {"$set": {"latest_chapter": latest, "updated_at": now, "source": source, "last_checked_at": now, "last_update_status": "updated"},},
         )
 
         return {
@@ -284,8 +284,9 @@ async def _update_one_manga(document):
             "latest_chapter": latest,
             "chapters": len(chapters),
         }
-    except Exception:
+    except Exception as exc:
         logger.exception("Automatic update failed for manga=%s", title)
+        await asyncio.to_thread(db.collection_mamga_info.update_one, {"_id": document["_id"]}, {"$set": {"last_checked_at": now, "last_update_status": "error", "last_update_error": str(exc)[:500]}})
         return {"id": manga_id, "title": title, "status": "error"}
 
 
