@@ -223,7 +223,6 @@ async def add_manga(upload_data: UploadData):
             chapters = []
 
         try:
-            try:
             metadata = await asyncio.to_thread(
                 mangaUpdate.get_manga_updates_data,
                 info.get("title", name),
