@@ -1,76 +1,53 @@
-import json
 import re
-import cloudscraper
+
+import requests
+
+
+BASE_URL = "https://api.mangaupdates.com/v1"
+TIMEOUT = 15
+
+
+def _request(method, url, **kwargs):
+    response = requests.request(method, url, timeout=TIMEOUT, **kwargs)
+    response.raise_for_status()
+    return response.json()
+
 
 def get_manga_updates_data(search_query):
-    # Create a CloudScraper session
-    scraper = cloudscraper.create_scraper(disableCloudflareV1=True,
-             browser={
-                 'browser': 'chrome',
-                 'platform': 'windows',
-                 'desktop': True
-             }
-    )
-    # Define the base URL for the MangaUpdates API
-    base_url = "https://api.mangaupdates.com/v1/series/search"
-
-    # Define the payload with the search key
-    payload = {
-        "search": search_query,
-        # Add other parameters if needed
-        "page": 1
-    }
-
-    # Make the POST request to the API
-    response = scraper.post(base_url, json=payload)
-
-    # Check if the request was successful (status code 200)
-    if response.status_code == 200:
-        # Extract and return the response content
-        data = response.json()
-        series_info = {}
-        results = data.get('results', [])
-        if results:
-            first_result = results[0]
-            record = first_result.get('record', {})
-            series_info['series_id'] = record.get('series_id')
-            series_info['title'] = record.get('title')
-            series_info['type'] = record.get('type')
-            series_info['year'] = record.get('year')
-            series_info['bayesian_rating'] = record.get('bayesian_rating')
-            series_info['genres'] = [genre['genre'] for genre in record.get('genres', [])]
-            associated, status = get_manga_associated(series_info['series_id'])
-            return series_info['type'], series_info['year'], series_info['bayesian_rating'], series_info['genres'], associated, status
-        else:
-            print("No results found.")
+    try:
+        data = _request(
+            "POST",
+            f"{BASE_URL}/series/search",
+            json={"search": search_query, "page": 1},
+        )
+        results = data.get("results") or []
+        if not results:
             return None
-    else:
-        # Return None if the request was unsuccessful
-        print("Error:", response.text)
+
+        record = (results[0] or {}).get("record") or {}
+        series_id = record.get("series_id")
+        if not series_id:
+            return None
+
+        associated, status = get_manga_associated(series_id)
+        return (
+            record.get("type"),
+            record.get("year"),
+            record.get("bayesian_rating"),
+            [item.get("genre") for item in record.get("genres", []) if item.get("genre")],
+            associated or [],
+            status or "",
+        )
+    except (requests.RequestException, ValueError, TypeError, KeyError):
         return None
 
-def get_manga_associated(id):
-  # Create a CloudScraper session
-    scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True})
-    
-    # Construct the URL with the series ID
-    url = f"https://api.mangaupdates.com/v1/series/{id}"
-    
-    # Make the GET request to the URL
-    response = scraper.get(url)
-    associated_titles = {}
-    # Check if the request was successful (status code 200)
-    if response.status_code == 200:
-       data = response.json()
-       associated_titles = data["associated"]
-       status = data['status']
-       status_pattern = r'\d+ .*?\((.*?)\)'
-       match = re.search(status_pattern, data['status'])
-       if match:
-           status = match.group(1)
-           return associated_titles, status
-       else:
-        return associated_titles, ""
-    else:
-        print("Error:", response.text)
-        return None
+
+def get_manga_associated(series_id):
+    try:
+        data = _request("GET", f"{BASE_URL}/series/{series_id}")
+        associated = data.get("associated") or []
+        status_text = data.get("status") or ""
+        match = re.search(r"\d+ .*?\((.*?)\)", status_text)
+        return associated, match.group(1) if match else ""
+    except (requests.RequestException, ValueError, TypeError, KeyError):
+        return [], ""
