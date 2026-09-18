@@ -19,6 +19,7 @@ from MangaSite import asq, aresnov, dilar, gmanga
 from config import database
 from schema import schemas
 from utils import mangaUpdate
+from utils.chapters import normalize_chapters
 from utils.title import title_similarity
 
 @asynccontextmanager
@@ -216,6 +217,7 @@ async def add_manga(upload_data: UploadData):
         _, _, source, info = selected
         try:
             chapters = await fetch_chapters(source, info)
+            chapters = normalize_chapters(chapters)
         except Exception:
             logger.exception("Chapter fetch failed for source=%s title=%s", source, name)
             chapters = []
