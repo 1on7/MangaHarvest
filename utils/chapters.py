@@ -73,9 +73,13 @@ def normalize_chapters(chapters: list | None) -> list:
 
 
 def merge_chapters(existing: list | None, incoming: list | None) -> list:
-    """Merge incoming chapters without losing existing team/page data."""
+    """Merge incoming chapters without replacing valid data with invalid data."""
     current = normalize_chapters(existing)
-    fresh = normalize_chapters(incoming)
+    fresh = []
+    for chapter in normalize_chapters(incoming):
+        valid, _ = validate_chapter(chapter)
+        if valid:
+            fresh.append(chapter)
 
     merged: dict[float, dict] = {
         item["chapter"]: {
