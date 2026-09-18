@@ -1,137 +1,89 @@
 import datetime
+import json
+import re
 import sys
 from os import path
 
 from bs4 import BeautifulSoup
+
 sys.path.append(path.dirname(path.dirname(path.abspath(__file__))))
 
-import re
-import time
-from utils import date
-import json
+from MangaSite.http import fetch_json, fetch_text
 
-import aiohttp
-import asyncio
 
-async def fetch(url, method='GET', json=None, headers=None):
-    async with aiohttp.ClientSession() as session:
-        if method == 'GET':
-            async with session.get(url, headers=headers) as response:
-                return await response.json()
-        elif method == 'POST':
-            async with session.post(url, json=json, headers=headers) as response:
-                response_txt = await response.json()
-                return response_txt
-        else:
-            raise ValueError(f"Invalid HTTP method: {method}")
+_HEADERS = {"Accept": "application/json,text/html,*/*", "User-Agent": "MangaHarvest/2.0"}
+
 
 async def dilar_info(name):
-    url = "https://dilar.tube/api/quick_search"
-    headers = {
-        "accept": "application/json",
-        "accept-language": "en-US,en;q=0.9",
-        "content-encoding": "gzip",
-        "content-type": "application/json",
-        "sec-ch-ua": "\"Chromium\";v=\"122\", \"Not(A:Brand\";v=\"24\", \"Opera\";v=\"108\"",
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": "\"Windows\"",
-        "sec-fetch-dest": "empty",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-origin"
-    }
-    data = {
-        "query": name,
-        "includes": ["Manga", "Team", "Member"]
-    }
+    try:
+        response = await fetch_json(
+            "https://dilar.tube/api/quick_search",
+            method="POST",
+            json={"query": name, "includes": ["Manga", "Team", "Member"]},
+            headers=_HEADERS,
+        )
+        if not response or not isinstance(response, list):
+            return "not found"
+        items = (response[0] or {}).get("data") or []
+        if not items:
+            return "not found"
+        manga = items[0]
+        latest = float(manga.get("latest_chapter", 0))
+        if latest.is_integer():
+            latest = int(latest)
+        manga_id = manga.get("id")
+        cover = manga.get("cover", "")
+        return {
+            "title": manga.get("title", name),
+            "summary": manga.get("summary", ""),
+            "cover": f"https://dilar.tube/uploads/manga/cover/{manga_id}/{cover}" if cover else "",
+            "id": manga_id,
+            "latest_chapter": latest,
+        }
+    except (ValueError, TypeError, KeyError, RuntimeError):
+        return "not found"
 
-    # Send a POST request to the specified URL
-    response = await fetch(url, method="POST", json=data, headers=headers)
 
-    # Check if the request was successful
-    if response:
-        # Extract information for the first manga
-        manga_info = response[0]['data']
-        if manga_info:
-           manga_info = manga_info[0]
-           # Extracted manga information
-           manga_id = manga_info['id']
-           title = manga_info['title']
-           summary = manga_info[u'summary']
-           try:
-               latest_chapter = int(manga_info['latest_chapter'])
-           except:
-               latest_chapter = float(manga_info['latest_chapter'])
-           
-           cover_url = f'https://dilar.tube/uploads/manga/cover/{manga_id}/' + manga_info['cover']
-        
-           return {"title": title, "summary": summary, "cover": cover_url, "id": manga_id, "latest_chapter": latest_chapter}
-        else:
-          return 'not found'
-    else:
-        return "Request failed with status code:", 404
-      
 async def dilar_chapter_imgs(chapter_url):
-    headers = {
-        "accept-language": "en-US,en;q=0.9",
-        "content-encoding": "gzip",
-        "content-type": "application/json",
-        "sec-ch-ua": "\"Chromium\";v=\"122\", \"Not(A:Brand\";v=\"24\", \"Opera\";v=\"108\"",
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": "\"Windows\"",
-        "sec-fetch-dest": "empty",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-origin"
-    }
+    try:
+        text = await fetch_text(chapter_url, headers={"Accept": "text/html,*/*"})
+        soup = BeautifulSoup(text, "html.parser")
+        script = soup.find("script", class_="js-react-on-rails-component")
+        if not script or not script.string:
+            return []
+        data = json.loads(script.string)
+        release = data["readerDataAction"]["readerData"]["release"]
+        storage_key = release["storage_key"]
+        pages = release.get("pages") or []
+        return [f"https://dilar.tube/uploads/releases/{storage_key}/hq/{page}" for page in pages]
+    except (ValueError, TypeError, KeyError, RuntimeError):
+        return []
 
-    # Send a POST request to the specified URL
-    async with aiohttp.ClientSession() as session:
-       async with session.get(chapter_url, headers=headers) as response:
-         # Parse the HTML content
-         soup = BeautifulSoup(await response.text(), 'html.parser')
-
-         # Find the script tag containing the JSON data
-         script_tag = soup.find('script', {'class': 'js-react-on-rails-component'})
-
-         # Extract the JSON data from the script tag
-         json_data = json.loads(script_tag.string)
-
-         # Extract pages and storage key from the JSON data
-         storage_key = json_data['readerDataAction']['readerData']['release']['storage_key']
-         pages = json_data['readerDataAction']['readerData']['release']['pages']
-         image_urls = [f"https://dilar.tube/uploads/releases/{storage_key}/hq/" + page for page in pages]
-         return image_urls
-    
 
 async def dilar_chapters(id, title):
-    url = f"https://dilar.tube/api/mangas/{id}/releases"
-    headers = {
-        "accept": "application/json",
-        "accept-language": "en-US,en;q=0.9",
-        "content-encoding": "gzip",
-        "content-type": "application/json",
-        "sec-ch-ua": "\"Chromium\";v=\"122\", \"Not(A:Brand\";v=\"24\", \"Opera\";v=\"108\"",
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": "\"Windows\"",
-        "sec-fetch-dest": "empty",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-origin"
-    }
-
-    # Send a POST request to the specified URL
-    response = await fetch(url, method="GET", headers=headers)
-  
-  # Check if the request was successful
-    if response:
-        chapters_info = {}
-        for release in response["releases"]:
-            # Extract chapter number
-            chapter_num = release["chapter"]
-            # Extract chapter URL
-            chapter_url = f"https://dilar.tube/mangas/{id}/{title.replace(' ', '-')}/{chapter_num}"
-            chapter_date = datetime.datetime.fromtimestamp(release["time_stamp"]).strftime('%Y-%m-%d')
-            chapter_key = (chapter_num, 'Dilar')
-            team_name = "Dilar"
-            chapters_info[chapter_key] = {"chapter": chapter_num, "teams": [{"team_name": team_name, "chapter_date": chapter_date, "chapter_page": await dilar_chapter_imgs(chapter_url)}]}
-        return list(chapters_info.values())
-    else:
-        return "Request failed with status code:", 404
+    try:
+        response = await fetch_json(
+            f"https://dilar.tube/api/mangas/{id}/releases",
+            headers=_HEADERS,
+        )
+        chapters = {}
+        for release in (response or {}).get("releases", []):
+            chapter_num = release.get("chapter")
+            if chapter_num is None:
+                continue
+            try:
+                chapter_num = float(chapter_num)
+                if chapter_num.is_integer():
+                    chapter_num = int(chapter_num)
+            except (ValueError, TypeError):
+                continue
+            chapter_url = f"https://dilar.tube/mangas/{id}/{str(title).replace(' ', '-')}/{chapter_num}"
+            timestamp = release.get("time_stamp")
+            chapter_date = datetime.datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d") if timestamp else ""
+            chapters[(chapter_num, "Dilar")] = {
+                "chapter": chapter_num,
+                "teams": [{"team_name": "Dilar", "chapter_date": chapter_date, "chapter_page": await dilar_chapter_imgs(chapter_url)}],
+            }
+        return list(chapters.values())
+    except (ValueError, TypeError, KeyError, RuntimeError):
+        return None
