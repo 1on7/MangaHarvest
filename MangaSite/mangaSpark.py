@@ -1,163 +1,128 @@
-import sys
-from os import path
-import time
-sys.path.append(path.dirname(path.dirname(path.abspath(__file__))))
-from utils import date
-import asyncio
-from aiohttp import ClientSession, ClientTimeout
-from bs4 import BeautifulSoup
-import re
 import json
+import re
+from os import path
+import sys
+
+from bs4 import BeautifulSoup
+
+sys.path.append(path.dirname(path.dirname(path.abspath(__file__))))
+
+from MangaSite.http import fetch_json, fetch_text
+from utils import date
 
 
-chapter_number = 0
+BASE_URL = "https://mangaspark.org/wp-admin/admin-ajax.php"
+HEADERS = {
+    "accept": "application/json, text/javascript, */*; q=0.01",
+    "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+    "x-requested-with": "XMLHttpRequest",
+}
 
-async def fetch(url, method='GET', data=None, headers=None):
-    async with ClientSession() as session:
-        if method == 'GET':
-            async with session.get(url, headers=headers) as response:
-                return await response.text()
-        elif method == 'POST':
-            async with session.post(url, data=data, headers=headers) as response:
-                return await response.text()
-        else:
-            raise ValueError(f"Invalid HTTP method: {method}")
+
+def _chapter_number(value):
+    match = re.search(r"\d+(?:\.\d+)?", str(value or ""))
+    if not match:
+        return None
+    number = float(match.group())
+    return int(number) if number.is_integer() else number
+
 
 async def mangaspark_search(name):
-    url = "https://mangaspark.org/wp-admin/admin-ajax.php"
-    payload = {
-        "action": "wp-manga-search-manga",
-        "title": name
-    }
-    headers = {
-        "accept": "application/json, text/javascript, */*; q=0.01",
-        "accept-language": "en-US,en;q=0.9",
-        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "sec-ch-ua": "\"Not A(Brand\";v=\"99\", \"Opera\";v=\"107\", \"Chromium\";v=\"121\"",
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": "\"Windows\"",
-        "sec-fetch-dest": "empty",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-origin",
-        "x-requested-with": "XMLHttpRequest"
-    }
-    response_text = await fetch(url, method='POST', data=payload, headers=headers)
-    data = json.loads(response_text)
-    if not data["data"]:
+    try:
+        data = await fetch_json(BASE_URL, method="POST", data={
+            "action": "wp-manga-search-manga",
+            "title": name,
+        }, headers=HEADERS)
+        items = data.get("data") or []
+        if not items:
+            return "not found"
+        return await mangaspark_info(items[0].get("url"))
+    except Exception:
         return "not found"
-    first_item = data["data"][0]
-    title = first_item["title"]
-    url = first_item["url"]
-    info = await mangaspark_info(url)
-    return info
 
-async def mangaspark_latest_chapters(id):
-    url = "https://mangaspark.org/wp-admin/admin-ajax.php"
-    payload = {
-        "action": "manga_get_chapters",
-        "manga": id
-    }
-    headers = {
-        "accept": "application/json, text/javascript, */*; q=0.01",
-        "accept-language": "en-US,en;q=0.9",
-        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "sec-ch-ua": "\"Not A(Brand\";v=\"99\", \"Opera\";v=\"107\", \"Chromium\";v=\"121\"",
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": "\"Windows\"",
-        "sec-fetch-dest": "empty",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-origin",
-        "x-requested-with": "XMLHttpRequest",
-        "x-oxylabs-render":"html"
-    }
-    response_text = await fetch(url, method='POST', data=payload, headers=headers)
-    if response_text:
-        soup = BeautifulSoup(response_text, 'html.parser')
-        chapter_items = soup.find('li', class_='wp-manga-chapter')
-        try:
-            chapter_num = int(chapter_items.a.text.strip())
-        except ValueError:
-            chapter_num = float(chapter_items.a.text.strip())
-        return chapter_num
-    else:
-        print("Failed to retrieve data.")
+
+async def mangaspark_latest_chapters(manga_id):
+    try:
+        response_text = await fetch_text(BASE_URL, method="POST", data={
+            "action": "manga_get_chapters",
+            "manga": manga_id,
+        }, headers=HEADERS)
+        soup = BeautifulSoup(response_text, "html.parser")
+        chapter = soup.select_one("li.wp-manga-chapter a")
+        return _chapter_number(chapter.get_text(" ", strip=True)) if chapter else None
+    except Exception:
         return None
 
+
 async def mangaspark_info(url):
-    headers = {
-        "accept": "application/json, text/javascript, */*; q=0.01",
-        "accept-language": "en-US,en;q=0.9",
-        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "sec-ch-ua": "\"Not A(Brand\";v=\"99\", \"Opera\";v=\"107\", \"Chromium\";v=\"121\"",
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": "\"Windows\"",
-        "sec-fetch-dest": "empty",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-origin",
-        "x-requested-with": "XMLHttpRequest",
-        "x-oxylabs-render":"html"
-    }
-    response_text = await fetch(url, headers=headers)
-    soup = BeautifulSoup(response_text, 'html.parser')
-    post_title_element = soup.find('div', class_='post-title')
-    title = post_title_element.h1.text.strip()
-    description_element = soup.find('div', class_='description-summary')
-    description = description_element.find('p').text.strip()
-    image_url = soup.find('meta', property='og:image')['content']
-    pattern = r'"manga_id"\s*:\s*"(\d+)"'
-    match = re.search(pattern, response_text)
-    if match:
-        manga_id = match.group(1)
-    else:
-        print("Manga ID not found.")
-    latest_chapter = await mangaspark_latest_chapters(manga_id)
-    return {"title": title, "summary": description, "cover": image_url, "id": manga_id, "latest_chapter": latest_chapter}
+    if not url:
+        return "not found"
+    try:
+        response_text = await fetch_text(url, headers=HEADERS)
+        soup = BeautifulSoup(response_text, "html.parser")
+        title_node = soup.select_one(".post-title h1")
+        description_node = soup.select_one(".description-summary")
+        image_node = soup.select_one('meta[property="og:image"]')
+        manga_id = re.search(r'"manga_id"\s*:\s*"?(\d+)', response_text)
+
+        if not title_node or not manga_id:
+            return "not found"
+
+        latest = await mangaspark_latest_chapters(manga_id.group(1))
+        return {
+            "title": title_node.get_text(strip=True),
+            "summary": description_node.get_text(" ", strip=True) if description_node else "",
+            "cover": image_node.get("content", "") if image_node else "",
+            "id": manga_id.group(1),
+            "latest_chapter": latest,
+        }
+    except Exception:
+        return "not found"
+
 
 async def mangaspark_chapter_imgs(url):
-    response_text = await fetch(url)
-    soup = BeautifulSoup(response_text, 'html.parser')
-    image_divs = soup.find_all('div', class_='page-break no-gaps')
-    image_urls = [div.find('img')['src'].strip() for div in image_divs]
-    return image_urls
+    try:
+        response_text = await fetch_text(url)
+        soup = BeautifulSoup(response_text, "html.parser")
+        images = []
+        for image in soup.select("div.page-break img"):
+            src = image.get("data-src") or image.get("src")
+            if src:
+                images.append(src.strip())
+        return images
+    except Exception:
+        return []
 
-async def mangaspark_chapters(id):
-    url = "https://mangaspark.org/wp-admin/admin-ajax.php"
-    payload = {
-        "action": "manga_get_chapters",
-        "manga": id
-    }
-    headers = {
-        "accept": "application/json, text/javascript, */*; q=0.01",
-        "accept-language": "en-US,en;q=0.9",
-        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "sec-ch-ua": "\"Not A(Brand\";v=\"99\", \"Opera\";v=\"107\", \"Chromium\";v=\"121\"",
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": "\"Windows\"",
-        "sec-fetch-dest": "empty",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-origin",
-        "x-requested-with": "XMLHttpRequest",
-        "x-oxylabs-render":"html"
-    }
-    response_text = await fetch(url, method='POST', data=payload, headers=headers)
-    if response_text:
-        soup = BeautifulSoup(response_text, 'html.parser')
-        chapter_items = soup.find_all('li', class_='wp-manga-chapter')
+
+async def mangaspark_chapters(manga_id):
+    try:
+        response_text = await fetch_text(BASE_URL, method="POST", data={
+            "action": "manga_get_chapters",
+            "manga": manga_id,
+        }, headers=HEADERS)
+        soup = BeautifulSoup(response_text, "html.parser")
         chapters_info = {}
-        for chapter in chapter_items:
-            try:
-                chapter_num = int(chapter.a.text.strip())
-            except ValueError:
-                chapter_num = float(chapter.a.text.strip())
-            chapter_url = chapter.a['href']
-            release_date = chapter.find('span', class_='chapter-release-date').i.text
-            chapter_key = (chapter_num, 'mangaSpark')
-            team_name = "MangaSpark"
-            print(chapter_num)
-            chapter_number = chapter_num
-            chapters_info[chapter_key] = {"chapter": chapter_num, "teams": [{"team_name": team_name, "chapter_date": date.convert_arabic_date_to_numeric(release_date.replace('،', '')), "chapter_page": await mangaspark_chapter_imgs(chapter_url)}]}
-            await asyncio.sleep(2)
+
+        for chapter in soup.select("li.wp-manga-chapter"):
+            link = chapter.find("a")
+            if not link:
+                continue
+            chapter_num = _chapter_number(link.get_text(" ", strip=True))
+            chapter_url = link.get("href")
+            if chapter_num is None or not chapter_url:
+                continue
+
+            release = chapter.select_one(".chapter-release-date i, .chapter-release-date")
+            release_text = release.get_text(" ", strip=True) if release else ""
+            chapters_info[(chapter_num, "MangaSpark")] = {
+                "chapter": chapter_num,
+                "teams": [{
+                    "team_name": "MangaSpark",
+                    "chapter_date": date.convert_arabic_date_to_numeric(release_text),
+                    "chapter_page": await mangaspark_chapter_imgs(chapter_url),
+                }],
+            }
+
         return list(chapters_info.values())
-    else:
-        print("Failed to retrieve data.")
+    except Exception:
         return None
