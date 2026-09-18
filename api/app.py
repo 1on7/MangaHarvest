@@ -20,6 +20,7 @@ from config import database
 from schema import schemas
 from utils import mangaUpdate
 from utils.chapters import normalize_chapters
+from utils.cache import TTLCache
 from utils.title import title_similarity
 
 @asynccontextmanager
@@ -55,6 +56,8 @@ class UploadData(BaseModel):
 
 
 NOT_FOUND = "not found"
+SOURCE_CACHE = TTLCache(ttl_seconds=600, max_size=256)
+METADATA_CACHE = TTLCache(ttl_seconds=3600, max_size=512)
 
 
 def object_id(value: str) -> ObjectId:
@@ -101,6 +104,11 @@ def _safe_sync_call(fn, *args):
 
 
 async def find_best_source(name: str):
+    cache_key = clean_name(name).casefold()
+    cached = SOURCE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
     results = await asyncio.gather(
         _safe_async_call(gmanga.gmanga_search, name),
         asyncio.to_thread(_safe_sync_call, aresnov.get_aresnov_info, name),
@@ -114,7 +122,10 @@ async def find_best_source(name: str):
         if candidate:
             candidates.append(candidate)
 
-    return max(candidates, key=lambda item: (item[0], item[1])) if candidates else None
+    selected = max(candidates, key=lambda item: (item[0], item[1])) if candidates else None
+    if selected is not None:
+        SOURCE_CACHE.set(cache_key, selected)
+    return selected
 
 
 async def fetch_chapters(source: str, info: Dict[str, Any]):
@@ -222,14 +233,19 @@ async def add_manga(upload_data: UploadData):
             logger.exception("Chapter fetch failed for source=%s title=%s", source, name)
             chapters = []
 
-        try:
-            metadata = await asyncio.to_thread(
-                mangaUpdate.get_manga_updates_data,
-                info.get("title", name),
-            )
-        except Exception:
-            logger.exception("Metadata enrichment failed for title=%s", name)
-            metadata = None
+        metadata_key = clean_name(str(info.get("title") or name)).casefold()
+        metadata = METADATA_CACHE.get(metadata_key)
+        if metadata is None:
+            try:
+                metadata = await asyncio.to_thread(
+                    mangaUpdate.get_manga_updates_data,
+                    info.get("title", name),
+                )
+                if metadata is not None:
+                    METADATA_CACHE.set(metadata_key, metadata)
+            except Exception:
+                logger.exception("Metadata enrichment failed for title=%s", name)
+                metadata = None
         if metadata:
             manga_type, year, rate, categories, associated, status = metadata
         else:
