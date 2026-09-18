@@ -60,6 +60,7 @@ class UploadData(BaseModel):
 NOT_FOUND = "not found"
 SOURCE_CACHE = TTLCache(ttl_seconds=600, max_size=256)
 METADATA_CACHE = TTLCache(ttl_seconds=3600, max_size=512)
+UPDATE_CONCURRENCY = 4
 
 
 def object_id(value: str) -> ObjectId:
@@ -226,9 +227,18 @@ def _all_manga_documents(limit: int):
 
 async def update_manga_library(limit: int = 25):
     documents = await asyncio.to_thread(_all_manga_documents, limit)
-    results = []
+    semaphore = asyncio.Semaphore(UPDATE_CONCURRENCY)
 
-    for document in documents:
+    async def update_one(document):
+        async with semaphore:
+            return await _update_one_manga(document)
+
+    return await asyncio.gather(*(update_one(document) for document in documents))
+
+
+async def _update_one_manga(document):
+    results = []
+    for _ in (0,):
         manga_id = str(document["_id"])
         title = clean_name(str(document.get("title") or ""))
         if not title:
@@ -272,7 +282,7 @@ async def update_manga_library(limit: int = 25):
             logger.exception("Automatic update failed for manga=%s", title)
             results.append({"id": manga_id, "title": title, "status": "error"})
 
-    return results
+    return results[0] if results else {"status": "error"}
 
 
 @app.post("/api/v1/admin/update")
