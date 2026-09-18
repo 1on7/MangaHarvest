@@ -56,3 +56,15 @@ def test_merge_chapters_preserves_existing_and_adds_new_teams():
     assert result[0]["teams"][0]["chapter_date"] == "new"
     assert result[0]["teams"][0]["chapter_page"] == ["old.jpg"]
     assert result[0]["teams"][1]["team_name"] == "Team B"
+
+
+
+def test_find_missing_chapters_ignores_decimal_chapters():
+    from utils.chapters import find_missing_chapters
+    assert find_missing_chapters([{"chapter": 1}, {"chapter": 2}, {"chapter": 4}, {"chapter": 4.5}]) == [3]
+
+
+def test_find_missing_chapters_returns_empty_for_contiguous_or_too_short_data():
+    from utils.chapters import find_missing_chapters
+    assert find_missing_chapters([{"chapter": 1}, {"chapter": 2}, {"chapter": 3}]) == []
+    assert find_missing_chapters([{"chapter": 10}]) == []
