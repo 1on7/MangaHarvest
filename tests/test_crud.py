@@ -25,6 +25,8 @@ def test_crud_info_chapters_update_delete(monkeypatch):
         "title": "Solo Leveling",
         "summary": "Original summary",
         "cover": "cover.jpg",
+        "source": "gmanga",
+        "last_update_status": "updated",
     }).inserted_id
     manga_id = str(manga_id)
     chapters.insert_one({
