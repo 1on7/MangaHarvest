@@ -20,11 +20,14 @@ def _normalize_team(team: dict) -> dict:
     if not isinstance(pages, list):
         pages = [pages]
 
-    return {
+    normalized = {
         "team_name": normalize_team_name(team.get("team_name")) or "unknown",
         "chapter_date": str(team.get("chapter_date") or ""),
         "chapter_page": [str(page).strip() for page in pages if str(page).strip()],
     }
+    if team.get("source"):
+        normalized["source"] = str(team["source"])
+    return normalized
 
 
 def normalize_chapters(chapters: list | None) -> list:
@@ -102,6 +105,8 @@ def merge_chapters(existing: list | None, incoming: list | None) -> list:
                 old["chapter_date"] = team["chapter_date"]
             if team.get("chapter_page"):
                 old["chapter_page"] = team["chapter_page"]
+            if team.get("source"):
+                old["source"] = team["source"]
 
     return sorted(merged.values(), key=lambda item: float(item["chapter"]))
 
