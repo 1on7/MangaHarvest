@@ -18,7 +18,7 @@ def _use_mock_db(monkeypatch):
 def test_update_manga_library_skips_up_to_date(monkeypatch):
     _use_mock_db(monkeypatch)
     info = api_app.db.collection_mamga_info
-    manga_id = info.insert_one({
+    manga_oid = info.insert_one({
         "title": "Solo Leveling",
         "latest_chapter": 10,
     }).inserted_id
@@ -47,7 +47,7 @@ def test_update_manga_library_updates_new_chapters(monkeypatch):
         "title": "Solo Leveling",
         "latest_chapter": 10,
     }).inserted_id
-    manga_id = str(manga_id)
+    manga_id = str(manga_oid)
 
     async def fake_source(title):
         return (1.0, 12, "gmanga", {"title": title, "post_url": "https://example.test"})
@@ -66,7 +66,7 @@ def test_update_manga_library_updates_new_chapters(monkeypatch):
     assert result[0]["latest_chapter"] == 12
     assert result[0]["chapters"] == 2
 
-    stored = info.find_one({"_id": manga_id})
+    stored = info.find_one({"_id": manga_oid})
     assert stored["latest_chapter"] == 12
     stored_chapters = chapters.find_one({"manga_id": manga_id})
     assert len(stored_chapters["chapters"]) == 2
