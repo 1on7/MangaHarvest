@@ -244,40 +244,49 @@ async def _update_one_manga(document):
 
     try:
         selected = await find_best_source(title)
-            if selected is None:
+        if selected is None:
             return {"id": manga_id, "title": title, "status": "source_not_found"}
 
         _, source_latest, source, info = selected
         stored_latest = chapter_number(document.get("latest_chapter"))
 
-            if source_latest >= 0 and stored_latest >= source_latest:
-            return {"id": manga_id, "title": title, "status": "up_to_date", "latest_chapter": stored_latest}
+        if source_latest >= 0 and stored_latest >= source_latest:
+            return {
+                "id": manga_id,
+                "title": title,
+                "status": "up_to_date",
+                "latest_chapter": stored_latest,
+            }
 
         chapters = normalize_chapters(await fetch_chapters(source, info))
-            if not chapters:
+        if not chapters:
             return {"id": manga_id, "title": title, "status": "no_chapters"}
 
         latest = max(chapter_number(item.get("chapter")) for item in chapters)
         now = datetime.now(timezone.utc)
 
-            await asyncio.to_thread(
-                db.collection_mamga_chapters.update_one,
-                {"manga_id": manga_id},
-                {"$set": {"chapters": chapters, "updated_at": now}},
-                upsert=True,
-            )
+        await asyncio.to_thread(
+            db.collection_mamga_chapters.update_one,
+            {"manga_id": manga_id},
+            {"$set": {"chapters": chapters, "updated_at": now}},
+            upsert=True,
+        )
         await asyncio.to_thread(
             db.collection_mamga_info.update_one,
-                {"_id": document["_id"]},
-                {"$set": {"latest_chapter": latest, "updated_at": now, "source": source}},
-            )
+            {"_id": document["_id"]},
+            {"$set": {"latest_chapter": latest, "updated_at": now, "source": source}},
+        )
 
-        return {"id": manga_id, "title": title, "status": "updated", "latest_chapter": latest, "chapters": len(chapters)}
+        return {
+            "id": manga_id,
+            "title": title,
+            "status": "updated",
+            "latest_chapter": latest,
+            "chapters": len(chapters),
+        }
     except Exception:
         logger.exception("Automatic update failed for manga=%s", title)
         return {"id": manga_id, "title": title, "status": "error"}
-
-
 
 
 @app.post("/api/v1/admin/update")
