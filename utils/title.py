@@ -3,6 +3,7 @@ import unicodedata
 
 SEPARATORS = re.compile(r"[\s_\-:|/\\]+")
 NON_ALNUM = re.compile(r"[^\w]+", re.UNICODE)
+ROMAN_NUMERALS = re.compile(r"\b(?:ii|iii|iv|v|vi|vii|viii|ix|x)\b", re.IGNORECASE)
 
 
 def normalize_title(value: str) -> str:
@@ -11,6 +12,10 @@ def normalize_title(value: str) -> str:
     value = SEPARATORS.sub(" ", value)
     value = NON_ALNUM.sub(" ", value)
     return " ".join(value.split())
+
+
+def title_tokens(value: str) -> set[str]:
+    return set(normalize_title(value).split())
 
 
 def title_similarity(query: str, candidate: str) -> float:
@@ -26,8 +31,21 @@ def title_similarity(query: str, candidate: str) -> float:
         longer = max(len(query_norm), len(candidate_norm))
         return 0.90 + (shorter / longer) * 0.05
 
-    query_tokens = set(query_norm.split())
-    candidate_tokens = set(candidate_norm.split())
+    query_tokens = title_tokens(query)
+    candidate_tokens = title_tokens(candidate)
     overlap = len(query_tokens & candidate_tokens)
     union = len(query_tokens | candidate_tokens)
-    return overlap / union if union else 0.0
+    if not union:
+        return 0.0
+
+    jaccard = overlap / union
+    containment = overlap / min(len(query_tokens), len(candidate_tokens))
+    return (jaccard * 0.6) + (containment * 0.4)
+
+
+def title_search_regex(value: str) -> str:
+    """Build a safe MongoDB regex that searches normalized title-like text."""
+    normalized = normalize_title(value)
+    if not normalized:
+        return ""
+    return ".*".join(re.escape(token) for token in normalized.split())
