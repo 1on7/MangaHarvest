@@ -23,7 +23,7 @@ from schema import schemas
 from utils import mangaUpdate
 from utils.chapters import chapter_number as normalized_chapter_number, merge_chapters, normalize_chapters
 from utils.cache import TTLCache
-from utils.title import title_similarity
+from utils.title import title_search_regex, title_similarity
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -462,10 +462,10 @@ async def chapters_manga(manga_id: str):
 
 
 def _search_manga_documents(name: str, skip: int, limit: int):
-    escaped = re.escape(name.strip())
+    regex = title_search_regex(name)
     return list(
         db.collection_mamga_info.find(
-            {"title": {"$regex": escaped, "$options": "i"}}
+            {"title": {"$regex": regex, "$options": "i"}}
         )
         .sort("title", 1)
         .skip(skip)
