@@ -27,6 +27,8 @@ def _normalize_team(team: dict) -> dict:
     }
     if team.get("source"):
         normalized["source"] = str(team["source"])
+    if team.get("verification_status"):
+        normalized["verification_status"] = str(team["verification_status"])
     return normalized
 
 
