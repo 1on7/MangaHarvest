@@ -274,7 +274,7 @@ async def _update_one_manga(document):
         await asyncio.to_thread(
             db.collection_mamga_info.update_one,
             {"_id": document["_id"]},
-            {"$set": {"latest_chapter": latest, "updated_at": now, "source": source, "last_checked_at": now, "last_update_status": "updated"},},
+            {"$set": {"latest_chapter": latest, "updated_at": now, "source": source, "last_checked_at": now, "last_update_status": "updated"}},
         )
 
         return {
