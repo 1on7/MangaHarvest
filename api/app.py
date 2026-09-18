@@ -23,7 +23,7 @@ from MangaSite import asq, aresnov, dilar, gmanga
 from config import database
 from schema import schemas
 from utils import mangaUpdate
-from utils.chapters import chapter_number as normalized_chapter_number, merge_chapters, normalize_chapters
+from utils.chapters import chapter_number as normalized_chapter_number, find_missing_chapters, merge_chapters, normalize_chapters
 from utils.cache import TTLCache
 from utils.title import title_search_regex, title_similarity
 
@@ -296,7 +296,7 @@ async def _update_one_manga(document):
         stored_latest = chapter_number(document.get("latest_chapter"))
         if source_latest >= 0 and stored_latest >= source_latest:
             await asyncio.to_thread(db.collection_mamga_info.update_one, {"_id": document["_id"]}, {"$set": {"source": source, "last_checked_at": now, "last_update_status": "up_to_date"}})
-            return {"id": manga_id, "title": title, "status": "up_to_date", "latest_chapter": stored_latest}
+            return {"id": manga_id, "title": title, "status": "up_to_date", "latest_chapter": stored_latest, "missing_chapters": []}
 
         existing_doc = await asyncio.to_thread(db.collection_mamga_chapters.find_one, {"manga_id": manga_id}, {"chapters": 1})
         existing_chapters = normalize_chapters((existing_doc or {}).get("chapters") or [])
@@ -307,6 +307,7 @@ async def _update_one_manga(document):
 
         chapters = merge_chapters(existing_chapters, incoming_chapters)
         latest = max(normalized_chapter_number(item.get("chapter")) for item in chapters)
+        missing_chapters = find_missing_chapters(chapters)
 
         await asyncio.to_thread(
             db.collection_mamga_chapters.update_one,
@@ -317,7 +318,7 @@ async def _update_one_manga(document):
         await asyncio.to_thread(
             db.collection_mamga_info.update_one,
             {"_id": document["_id"]},
-            {"$set": {"latest_chapter": latest, "updated_at": now, "source": source, "last_checked_at": now, "last_update_status": "updated"}},
+            {"$set": {"latest_chapter": latest, "updated_at": now, "source": source, "last_checked_at": now, "last_update_status": "updated", "missing_chapters": missing_chapters}},
         )
 
         return {
@@ -326,6 +327,7 @@ async def _update_one_manga(document):
             "status": "updated",
             "latest_chapter": latest,
             "chapters": len(chapters),
+            "missing_chapters": missing_chapters,
         }
     except Exception as exc:
         logger.exception("Automatic update failed for manga=%s", title)
