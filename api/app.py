@@ -149,30 +149,55 @@ def _safe_sync_call(fn, *args):
         return NOT_FOUND
 
 
-async def find_best_source(name: str):
-    cache_key = clean_name(name).casefold()
-    cached = SOURCE_CACHE.get(cache_key)
-    if cached is not None:
-        return cached
-
+async def find_source_candidates(name: str):
     results = await asyncio.gather(
         _safe_async_call(gmanga.gmanga_search, name),
         asyncio.to_thread(_safe_sync_call, aresnov.get_aresnov_info, name),
         _safe_async_call(dilar.dilar_info, name),
         _safe_async_call(asq.asq_info, name),
     )
-
     candidates = []
     for result, source in zip(results, ("gmanga", "aresnov", "dilar", "asq")):
         candidate = _candidate(result, source, name)
         if candidate:
             candidates.append(candidate)
+    return sorted(candidates, key=lambda item: (item[0], item[1]), reverse=True)
 
-    selected = max(candidates, key=lambda item: (item[0], item[1])) if candidates else None
+
+async def find_best_source(name: str):
+    cache_key = clean_name(name).casefold()
+    cached = SOURCE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    candidates = await find_source_candidates(name)
+    selected = candidates[0] if candidates else None
     if selected is not None:
         SOURCE_CACHE.set(cache_key, selected)
     return selected
 
+
+
+async def fetch_verified_chapters(name: str):
+    """Fetch chapters from every matching source and merge their teams."""
+    candidates = await find_source_candidates(name)
+    if not candidates:
+        return None, [], []
+
+    results = await asyncio.gather(
+        *(fetch_chapters(source, dict(info)) for _, _, source, info in candidates),
+        return_exceptions=True,
+    )
+    merged = []
+    successful_sources = []
+    for candidate, result in zip(candidates, results):
+        _, _, source, _ = candidate
+        if isinstance(result, Exception) or not result:
+            continue
+        merged = merge_chapters(merged, result)
+        successful_sources.append(source)
+
+    return candidates[0], merged, successful_sources
 
 
 def _existing_manga_state(title: str):
@@ -300,7 +325,9 @@ async def _update_one_manga(document):
 
         existing_doc = await asyncio.to_thread(db.collection_mamga_chapters.find_one, {"manga_id": manga_id}, {"chapters": 1})
         existing_chapters = normalize_chapters((existing_doc or {}).get("chapters") or [])
-        incoming_chapters = normalize_chapters(await fetch_chapters(source, info))
+        verified_selected, incoming_chapters, sources = await fetch_verified_chapters(title)
+        if verified_selected:
+            _, _, source, _ = verified_selected
         if not incoming_chapters:
             await asyncio.to_thread(db.collection_mamga_info.update_one, {"_id": document["_id"]}, {"$set": {"source": source, "last_checked_at": now, "last_update_status": "no_chapters"}})
             return {"id": manga_id, "title": title, "status": "no_chapters"}
@@ -318,7 +345,7 @@ async def _update_one_manga(document):
         await asyncio.to_thread(
             db.collection_mamga_info.update_one,
             {"_id": document["_id"]},
-            {"$set": {"latest_chapter": latest, "updated_at": now, "source": source, "last_checked_at": now, "last_update_status": "updated", "missing_chapters": missing_chapters}},
+            {"$set": {"latest_chapter": latest, "updated_at": now, "source": sources, "last_checked_at": now, "last_update_status": "updated", "missing_chapters": missing_chapters}},
         )
 
         return {
