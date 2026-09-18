@@ -2,6 +2,7 @@ import asyncio
 import base64
 import re
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 import logging
@@ -128,6 +129,19 @@ async def find_best_source(name: str):
     return selected
 
 
+
+def _existing_manga_state(title: str):
+    existing = db.collection_mamga_info.find_one({"title": title}, {"_id": 1, "latest_chapter": 1})
+    if not existing:
+        return None, None, []
+
+    manga_id = str(existing["_id"])
+    chapter_doc = db.collection_mamga_chapters.find_one({"manga_id": manga_id}, {"chapters": 1})
+    chapters = normalize_chapters((chapter_doc or {}).get("chapters") or [])
+    stored_latest = max((chapter_number(item.get("chapter")) for item in chapters), default=-1)
+    return manga_id, max(float(existing.get("latest_chapter") or -1), stored_latest), chapters
+
+
 async def fetch_chapters(source: str, info: Dict[str, Any]):
     if source == "gmanga":
         post_url = info.get("post_url")
@@ -225,15 +239,24 @@ async def add_manga(upload_data: UploadData):
             results.append({"name": name, "status": "not_found"})
             continue
 
-        _, _, source, info = selected
-        try:
-            chapters = await fetch_chapters(source, info)
-            chapters = normalize_chapters(chapters)
-        except Exception:
-            logger.exception("Chapter fetch failed for source=%s title=%s", source, name)
-            chapters = []
+        _, source_latest, source, info = selected
+        title = clean_name(str(info.get("title") or name))
+        existing_id, existing_latest, existing_chapters = await asyncio.to_thread(_existing_manga_state, title)
 
-        metadata_key = clean_name(str(info.get("title") or name)).casefold()
+        if existing_chapters and source_latest >= 0 and existing_latest >= source_latest:
+            chapters = existing_chapters
+            chapters_refreshed = False
+        else:
+            try:
+                chapters = normalize_chapters(await fetch_chapters(source, info))
+                if not chapters and existing_chapters:
+                    chapters = existing_chapters
+            except Exception:
+                logger.exception("Chapter fetch failed for source=%s title=%s", source, name)
+                chapters = existing_chapters
+            chapters_refreshed = chapters != existing_chapters
+
+        metadata_key = title.casefold()
         metadata = METADATA_CACHE.get(metadata_key)
         if metadata is None:
             try:
@@ -260,8 +283,10 @@ async def add_manga(upload_data: UploadData):
             "type": manga_type or "",
         })
 
-        title = clean_name(str(info.get("title") or name))
         info["title"] = title
+        if chapters:
+            info["latest_chapter"] = max(chapter_number(item.get("chapter")) for item in chapters)
+        info["updated_at"] = datetime.now(timezone.utc)
 
         try:
             manga_id, status = await asyncio.to_thread(
@@ -279,6 +304,7 @@ async def add_manga(upload_data: UploadData):
             "id": manga_id,
             "source": source,
             "chapters": len(chapters),
+            "chapters_updated": chapters_refreshed,
         })
 
     return {"results": results}
