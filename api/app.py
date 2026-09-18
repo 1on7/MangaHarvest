@@ -205,6 +205,7 @@ async def fetch_verified_chapters(name: str):
                     **team,
                     "source": source,
                     "verification_status": "verified",
+                    "last_verified_at": datetime.now(timezone.utc),
                 }
                 for team in (chapter.get("teams") or [])
                 if isinstance(team, dict)
