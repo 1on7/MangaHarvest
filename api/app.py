@@ -13,7 +13,7 @@ logger = logging.getLogger("mangaharvest")
 from fastapi.middleware.cors import CORSMiddleware
 
 from bson import ObjectId
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 from pymongo.errors import DuplicateKeyError
 
@@ -278,10 +278,11 @@ async def update_manga_library(limit: int = 25):
 @app.post("/api/v1/admin/update")
 async def admin_update(
     limit: int = Query(25, ge=1, le=100),
-    token: Optional[str] = Query(None),
+    authorization: Optional[str] = Header(None),
 ):
     expected_token = os.getenv("ADMIN_UPDATE_TOKEN")
-    if not expected_token or token != expected_token:
+    supplied_token = authorization.removeprefix("Bearer ").strip() if authorization else ""
+    if not expected_token or supplied_token != expected_token:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     results = await update_manga_library(limit)
