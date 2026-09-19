@@ -768,6 +768,15 @@ async def source_health(authorization: Optional[str] = Header(None)):
     if not expected_token or supplied_token != expected_token:
         raise HTTPException(status_code=401, detail="Unauthorized")
     documents = await asyncio.to_thread(lambda: list(db.collection_source_health.find({}, {"_id": 0}).sort("failures", -1)))
+    now = datetime.now(timezone.utc)
+    for document in documents:
+        disabled_until = document.get("disabled_until")
+        document["enabled"] = not disabled_until or disabled_until <= now
+        document["status"] = "disabled" if not document["enabled"] else (
+            "healthy" if document.get("successes", 0) else "unverified"
+        )
+        if disabled_until and disabled_until <= now:
+            document["disabled_until"] = None
     return {"sources": documents}
 
 
