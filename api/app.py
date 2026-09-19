@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
-from MangaSite import asq, aresnov, dilar, gmanga, mangaSpark
+from MangaSite import asq, aresnov, dilar, gmanga, mangaSpark, mangadex
 from config import database
 from schema import schemas
 from utils import mangaUpdate
@@ -177,6 +177,7 @@ def _safe_sync_call(fn, *args):
 
 async def find_source_candidates(name: str, *, include_slow=True):
     source_calls = [
+        ("mangadex", _timed_async_call("mangadex", mangadex.mangadex_search, name)),
         ("gmanga", _timed_async_call("gmanga", gmanga.gmanga_search, name)),
         ("dilar", _timed_async_call("dilar", dilar.dilar_info, name)),
         ("asq", _timed_async_call("asq", asq.asq_info, name)),
@@ -453,6 +454,9 @@ def _existing_manga_state(title: str):
 
 
 async def fetch_chapters(source: str, info: Dict[str, Any], *, min_chapter: float | None = None):
+    if source == "mangadex":
+        return await mangadex.mangadex_chapters(info.get("mangadex_id") or info.get("id"), min_chapter=min_chapter)
+
     if source == "gmanga":
         post_url = info.get("post_url")
         if not post_url:
