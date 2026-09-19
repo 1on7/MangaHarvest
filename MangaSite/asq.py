@@ -115,7 +115,7 @@ async def asq_chapter_imgs(chapter_url):
         return []
 
 
-async def asq_chapters(post_url, *, min_chapter=None)
+async def asq_chapters(post_url, *, min_chapter=None):
     try:
         text = await fetch_text(post_url, headers=_HEADERS)
         soup = BeautifulSoup(text, "html.parser")
