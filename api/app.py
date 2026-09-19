@@ -277,6 +277,15 @@ async def find_source_candidates(name: str, *, include_slow=True):
     )
     health = {item["source"]: item for item in health_docs}
 
+    # Skip sources that have been temporarily disabled after repeated failures.
+    now = datetime.now(timezone.utc)
+    disabled = {
+        source
+        for source, item in health.items()
+        if item.get("disabled_until") and item["disabled_until"] > now
+    }
+    candidates = [candidate for candidate in candidates if candidate[2] not in disabled]
+
     def health_score(source: str) -> float:
         item = health.get(source, {})
         checks = max(int(item.get("checks", 0)), 0)
@@ -369,6 +378,17 @@ def _record_source_health(source: str, *, success: bool, duration_ms: int, chapt
         }
         if success:
             update["$set"]["last_success_at"] = now
+            update["$set"]["disabled_until"] = None
+        else:
+            # Temporarily disable repeatedly failing sources. A successful
+            # check automatically re-enables the source.
+            existing = db.collection_source_health.find_one(
+                {"source": source},
+                {"failures": 1},
+            ) or {}
+            failures = int(existing.get("failures", 0))
+            if failures + 1 >= 3:
+                update["$set"]["disabled_until"] = now + timedelta(hours=6)
         db.collection_source_health.update_one({"source": source}, update, upsert=True)
     except Exception:
         logger.exception("Failed to record source health for %s", source)
