@@ -12,6 +12,7 @@ db = client["manga_db"]
 
 collection_manga_info: Collection = db["info"]
 collection_manga_chapters: Collection = db["chapters"]
+collection_source_health: Collection = db["source_health"]
 
 # Backward-compatible aliases for the existing API.
 collection_mamga_info = collection_manga_info
@@ -41,4 +42,13 @@ def ensure_indexes():
         [("manga_id", ASCENDING)],
         unique=True,
         name="manga_id_unique",
+    )
+    collection_source_health.create_index(
+        [("source", ASCENDING)],
+        unique=True,
+        name="source_unique",
+    )
+    collection_source_health.create_index(
+        [("last_checked_at", DESCENDING)],
+        name="source_last_checked_desc",
     )
