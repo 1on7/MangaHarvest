@@ -1,23 +1,23 @@
 import datetime
 import json
-import re
 import sys
 from os import path
+from urllib.parse import quote
 
 from bs4 import BeautifulSoup
 
 sys.path.append(path.dirname(path.dirname(path.abspath(__file__))))
 
 from MangaSite.http import fetch_json, fetch_text, gather_limited
+from MangaSite.parser_utils import absolute_url, best_match, chapter_number, extract_image_urls
 
-
-_HEADERS = {"Accept": "application/json,text/html,*/*", "User-Agent": "MangaHarvest/2.0"}
-
+BASE_URL = "https://dilar.tube"
+_HEADERS = {"Accept": "application/json,text/html,*/*", "User-Agent": "MangaHarvest/2.2"}
 
 async def dilar_info(name):
     try:
         response = await fetch_json(
-            "https://dilar.tube/api/quick_search",
+            f"{BASE_URL}/api/quick_search",
             method="POST",
             json={"query": name, "includes": ["Manga", "Team", "Member"]},
             headers=_HEADERS,
@@ -25,74 +25,83 @@ async def dilar_info(name):
         if not response or not isinstance(response, list):
             return "not found"
         items = (response[0] or {}).get("data") or []
-        if not items:
+        manga = best_match(items, name)
+        if not manga:
             return "not found"
-        manga = items[0]
-        latest = float(manga.get("latest_chapter", 0))
-        if latest.is_integer():
-            latest = int(latest)
+        latest = chapter_number(manga.get("latest_chapter"))
         manga_id = manga.get("id")
         cover = manga.get("cover", "")
         return {
             "title": manga.get("title", name),
             "summary": manga.get("summary", ""),
-            "cover": f"https://dilar.tube/uploads/manga/cover/{manga_id}/{cover}" if cover else "",
+            "cover": f"{BASE_URL}/uploads/manga/cover/{manga_id}/{cover}" if cover else "",
             "id": manga_id,
             "latest_chapter": latest,
         }
-    except (ValueError, TypeError, KeyError, RuntimeError):
+    except Exception:
         return "not found"
-
 
 async def dilar_chapter_imgs(chapter_url):
     try:
         text = await fetch_text(chapter_url, headers={"Accept": "text/html,*/*"})
         soup = BeautifulSoup(text, "html.parser")
         script = soup.find("script", class_="js-react-on-rails-component")
-        if not script or not script.string:
-            return []
-        data = json.loads(script.string)
-        release = data["readerDataAction"]["readerData"]["release"]
-        storage_key = release["storage_key"]
-        pages = release.get("pages") or []
-        return [f"https://dilar.tube/uploads/releases/{storage_key}/hq/{page}" for page in pages]
-    except (ValueError, TypeError, KeyError, RuntimeError):
+        if script and script.string:
+            data = json.loads(script.string)
+            release = data.get("readerDataAction", {}).get("readerData", {}).get("release", {})
+            storage_key = release.get("storage_key")
+            pages = release.get("pages") or []
+            if storage_key:
+                return [
+                    f"{BASE_URL}/uploads/releases/{storage_key}/hq/{page}"
+                    for page in pages
+                    if str(page).strip()
+                ]
+        return extract_image_urls(soup, base_url=chapter_url)
+    except Exception:
         return []
 
+def _release_date(timestamp):
+    try:
+        return datetime.datetime.fromtimestamp(float(timestamp), tz=datetime.timezone.utc).strftime("%Y-%m-%d") if timestamp else ""
+    except (TypeError, ValueError, OSError):
+        return ""
 
 async def dilar_chapters(id, title, *, min_chapter=None):
+    if not id:
+        return None
     try:
-        response = await fetch_json(
-            f"https://dilar.tube/api/mangas/{id}/releases",
-            headers=_HEADERS,
-        )
+        response = await fetch_json(f"{BASE_URL}/api/mangas/{id}/releases", headers=_HEADERS)
         chapters = {}
         for release in (response or {}).get("releases", []):
-            chapter_num = release.get("chapter")
-            if chapter_num is None:
+            number = chapter_number(release.get("chapter"))
+            if number is None:
                 continue
-            try:
-                chapter_num = float(chapter_num)
-                if chapter_num.is_integer():
-                    chapter_num = int(chapter_num)
-            except (ValueError, TypeError):
+
+            raw_url = release.get("url") or release.get("chapter_url")
+            chapter_url = absolute_url(BASE_URL, raw_url) if raw_url else (
+                f"{BASE_URL}/mangas/{id}/{quote(str(title or ''), safe='')}/{number}"
+            )
+            if not chapter_url:
                 continue
-            chapter_url = f"https://dilar.tube/mangas/{id}/{str(title).replace(' ', '-')}/{chapter_num}"
-            timestamp = release.get("time_stamp")
-            chapter_date = datetime.datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d") if timestamp else ""
-            chapters[(chapter_num, "Dilar")] = {
-                "chapter": chapter_num,
+
+            chapters[number] = {
+                "chapter": number,
                 "chapter_url": chapter_url,
-                "teams": [{"team_name": "Dilar", "chapter_date": chapter_date, "chapter_page": []}],
+                "teams": [{
+                    "team_name": "Dilar",
+                    "chapter_date": _release_date(release.get("time_stamp")),
+                    "chapter_page": [],
+                }],
             }
 
-        urls = [item["chapter_url"] for item in chapters.values() if min_chapter is None or item["chapter"] > min_chapter]
-        pages = await gather_limited([dilar_chapter_imgs(url) for url in urls], limit=6, return_exceptions=True)
-        pages_map = {url: value if isinstance(value, list) else [] for url, value in zip(urls, pages)}
-        for item in chapters.values():
-            item["teams"][0]["chapter_page"] = pages_map.get(item["chapter_url"], [])
-            item.pop("chapter_url", None)
+        selected = [item for item in chapters.values() if min_chapter is None or item["chapter"] > min_chapter]
+        pages = await gather_limited([dilar_chapter_imgs(item["chapter_url"]) for item in selected], limit=6, return_exceptions=True)
+        for item, value in zip(selected, pages):
+            item["teams"][0]["chapter_page"] = value if isinstance(value, list) else []
 
+        for item in chapters.values():
+            item.pop("chapter_url", None)
         return list(chapters.values())
-    except (ValueError, TypeError, KeyError, RuntimeError):
+    except Exception:
         return None
