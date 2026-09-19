@@ -152,11 +152,15 @@ def _candidate(result, source: str, query: str):
     return (similarity, chapter_number(result.get("latest_chapter")), source, result)
 
 
-async def _safe_async_call(fn, *args):
+async def _timed_async_call(source: str, fn, *args):
+    started = time.monotonic()
     try:
-        return await fn(*args)
-    except Exception:
-        logger.exception("Async source call failed: %s", getattr(fn, "__name__", repr(fn)))
+        result = await fn(*args)
+        await asyncio.to_thread(_record_source_health, source, success=isinstance(result, dict) and result != NOT_FOUND, duration_ms=int((time.monotonic() - started) * 1000), error=None if isinstance(result, dict) and result != NOT_FOUND else "No metadata returned")
+        return result
+    except Exception as exc:
+        await asyncio.to_thread(_record_source_health, source, success=False, duration_ms=int((time.monotonic() - started) * 1000), error=str(exc)[:300])
+        logger.exception("Async source call failed: %s", source)
         return NOT_FOUND
 
 
