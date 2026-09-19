@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional
 
 import aiohttp
 
-DEFAULT_TIMEOUT = aiohttp.ClientTimeout(total=20, connect=8, sock_read=15)
+DEFAULT_TIMEOUT = aiohttp.ClientTimeout(total=12, connect=4, sock_read=8)
 DEFAULT_HEADERS = {
     "User-Agent": "MangaHarvest/2.0",
     "Accept": "*/*",
@@ -18,7 +18,7 @@ async def _fetch(
     data: Any = None,
     json: Any = None,
     headers: Optional[Dict[str, str]] = None,
-    retries: int = 2,
+    retries: int = 1,
 ):
     merged_headers = {**DEFAULT_HEADERS, **(headers or {})}
     last_error: Optional[Exception] = None
