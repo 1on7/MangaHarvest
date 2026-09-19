@@ -175,7 +175,7 @@ def _safe_sync_call(fn, *args):
         return NOT_FOUND
 
 
-async def find_source_candidates(name: str, *, include_slow=True):
+async def find_source_candidates(name: str, *, include_slow=True, manga_id: str | None = None):
     source_calls = [
         ("mangadex", _timed_async_call("mangadex", mangadex.mangadex_search, name)),
         ("gmanga", _timed_async_call("gmanga", gmanga.gmanga_search, name)),
@@ -234,9 +234,10 @@ async def find_source_candidates(name: str, *, include_slow=True):
             logger.exception("Discovery failed: %s", source)
             return source, NOT_FOUND
 
+        filter_query = {"_id": ObjectId(manga_id)} if manga_id and ObjectId.is_valid(manga_id) else {"title": clean_name(name)}
         await asyncio.to_thread(
             db.collection_mamga_info.update_one,
-            {"title": clean_name(name)},
+            filter_query,
             {"$set": {
                 "current_source": source,
                 "sources_checked": 0,
@@ -251,9 +252,10 @@ async def find_source_candidates(name: str, *, include_slow=True):
         source, result = await task
         results.append((result, source))
         try:
+            filter_query = {"_id": ObjectId(manga_id)} if manga_id and ObjectId.is_valid(manga_id) else {"title": clean_name(name)}
             await asyncio.to_thread(
                 db.collection_mamga_info.update_one,
-                {"title": clean_name(name)},
+                filter_query,
                 {"$set": {
                     "current_source": source,
                     "sources_checked": len(results),
@@ -394,9 +396,10 @@ def _record_source_health(source: str, *, success: bool, duration_ms: int, chapt
         logger.exception("Failed to record source health for %s", source)
 
 
-async def fetch_verified_chapters(name: str, *, min_chapter: float | None = None, manga_id: str | None = None):
+async def fetch_verified_chapters(name: str, *, candidates=None, min_chapter: float | None = None, manga_id: str | None = None):
     """Fetch and merge chapters from every matching source with measured health."""
-    candidates = await find_source_candidates(name)
+    if candidates is None:
+        candidates = await find_source_candidates(name, manga_id=manga_id)
     if not candidates:
         return None, [], []
 
@@ -564,6 +567,28 @@ def update_manga_documents(title: str, info: Dict[str, Any], chapters: list):
 
 
 
+def _recover_stale_updates():
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=15)
+    result = db.collection_mamga_info.update_many(
+        {
+            "last_update_status": "updating",
+            "$or": [
+                {"last_attempt_at": {"$lt": cutoff}},
+                {"last_attempt_at": {"$exists": False}},
+            ],
+        },
+        {
+            "$set": {
+                "last_update_status": "queued",
+                "current_source": "queued",
+                "last_update_error": "Previous update expired and was re-queued",
+            }
+        },
+    )
+    if result.modified_count:
+        logger.warning("Re-queued %d stale manga updates", result.modified_count)
+
+
 def _all_manga_documents(limit: int):
     pipeline = [
         {
@@ -598,6 +623,7 @@ def _all_manga_documents(limit: int):
 
 
 async def update_manga_library(limit: int = 25):
+    await asyncio.to_thread(_recover_stale_updates)
     documents = await asyncio.to_thread(_all_manga_documents, limit)
     semaphore = asyncio.Semaphore(UPDATE_CONCURRENCY)
 
@@ -655,8 +681,10 @@ async def _update_one_manga(document):
             }},
         )
         logger.info("[UPDATE] %s: discovering sources", title)
-        candidates = await find_source_candidates(title)
+        candidates = await find_source_candidates(title, manga_id=manga_id)
         logger.info("[DISCOVERY] %s: found %d matching sources", title, len(candidates))
+        if not candidates:
+            logger.info("[DISCOVERY] %s: no matching sources", title)
         await asyncio.to_thread(
             db.collection_mamga_info.update_one,
             {"_id": document["_id"]},
@@ -668,7 +696,7 @@ async def _update_one_manga(document):
         )
         selected = candidates[0] if candidates else None
         if selected is None:
-            await asyncio.to_thread(db.collection_mamga_info.update_one, {"_id": document["_id"]}, {"$set": {"last_checked_at": now, "last_update_status": "source_not_found", "last_update_error": "No matching source found"}})
+            await asyncio.to_thread(db.collection_mamga_info.update_one, {"_id": document["_id"]}, {"$set": {"last_checked_at": now, "current_source": "no_match", "last_update_status": "source_not_found", "last_update_error": "No matching source found"}})
             return {"id": manga_id, "title": title, "status": "source_not_found"}
 
         _, source_latest, source, info = selected
@@ -724,7 +752,7 @@ async def _update_one_manga(document):
         # source so another source can recover the missing chapter(s).
         incremental_from = stored_latest if not known_gaps else None
         logger.info("[CHAPTERS] %s: fetching from %d sources", title, len(candidates))
-        verified_selected, incoming_chapters, sources = await fetch_verified_chapters(title, min_chapter=incremental_from, manga_id=str(document["_id"]))
+        verified_selected, incoming_chapters, sources = await fetch_verified_chapters(title, candidates=candidates, min_chapter=incremental_from, manga_id=manga_id)
         logger.info("[CHAPTERS] %s: received %d chapters from %d sources", title, len(incoming_chapters), len(sources))
         await asyncio.to_thread(
             db.collection_mamga_info.update_one,
@@ -890,16 +918,9 @@ async def add_manga(upload_data: UploadData):
         try:
             manga_id, status = await asyncio.to_thread(_queue_manga, name)
 
-            # Start an immediate best-effort background update. The scheduled
-            # updater remains the durable fallback for serverless instances.
-            if status == "queued":
-                document = await asyncio.to_thread(
-                    db.collection_mamga_info.find_one,
-                    {"_id": ObjectId(manga_id)},
-                )
-                if document:
-                    asyncio.create_task(_update_one_manga(document))
-                    status = "scraping"
+            # Queue only. The durable GitHub Actions updater processes queued
+            # manga; do not launch serverless background tasks here because
+            # Vercel may terminate the invocation immediately after the response.
 
             results.append({
                 "name": name,
