@@ -2,7 +2,7 @@ import asyncio
 import base64
 import re
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 import time
 
@@ -136,20 +136,23 @@ def _candidate(result, source: str, query: str):
     if isinstance(aliases, (list, tuple, set)):
         titles.extend(str(value) for value in aliases if value)
 
-    scores = [title_similarity(query, candidate) for candidate in titles]
-    similarity = max(scores, default=0.0)
-
-    # Exact normalized matches are always trusted. For fuzzy matches, require
-    # a meaningful overlap so a generic one-word query cannot select an
-    # unrelated series returned by a source's first search result.
-    exact_match = any(
-        query_normalized and normalize_title(candidate) == query_normalized
-        for candidate in titles
-    )
+    scored_titles = [
+        (title_similarity(query, candidate), normalize_title(candidate) == query_normalized)
+        for candidate in titles if candidate
+    ]
+    similarity = max((score for score, _ in scored_titles), default=0.0)
+    exact_match = any(exact for _, exact in scored_titles)
     if not exact_match and similarity < 0.45:
         return None
 
-    return (similarity, chapter_number(result.get("latest_chapter")), source, result)
+    latest = chapter_number(result.get("latest_chapter"))
+    metadata_bonus = sum(0.01 for key in ("cover", "summary", "post_url", "id") if result.get(key))
+    ranking_score = (
+        2.0 if exact_match else 0.0,
+        round(similarity + min(metadata_bonus, 0.03), 6),
+        latest,
+    )
+    return (ranking_score, latest, source, result)
 
 
 async def _timed_async_call(source: str, fn, *args):
@@ -285,32 +288,60 @@ async def find_best_source(name: str):
 def _record_source_health(source: str, *, success: bool, duration_ms: int, chapters: int = 0, error: str | None = None):
     now = datetime.now(timezone.utc)
     try:
-        db.collection_source_health.update_one(
-            {"source": source},
-            {"$set": {"source": source, "last_checked_at": now, "last_success_at": now if success else None, "last_duration_ms": duration_ms, "last_chapter_count": chapters, "last_error": error}, "$inc": {"checks": 1, "successes": 1 if success else 0, "failures": 0 if success else 1, "chapters_seen": chapters}},
-            upsert=True,
-        )
+        update = {
+            "$set": {
+                "source": source,
+                "last_checked_at": now,
+                "last_duration_ms": duration_ms,
+                "last_chapter_count": chapters,
+                "last_error": error,
+            },
+            "$inc": {
+                "checks": 1,
+                "successes": 1 if success else 0,
+                "failures": 0 if success else 1,
+                "chapters_seen": chapters,
+            },
+        }
+        if success:
+            update["$set"]["last_success_at"] = now
+        db.collection_source_health.update_one({"source": source}, update, upsert=True)
     except Exception:
         logger.exception("Failed to record source health for %s", source)
 
 
 async def fetch_verified_chapters(name: str, *, min_chapter: float | None = None):
-    """Fetch chapters from every matching source and merge their teams."""
+    """Fetch and merge chapters from every matching source with measured health."""
     candidates = await find_source_candidates(name)
     if not candidates:
         return None, [], []
 
+    async def timed_chapters(source: str, info: dict):
+        started = time.monotonic()
+        try:
+            result = await fetch_chapters(source, info, min_chapter=min_chapter)
+            return result, int((time.monotonic() - started) * 1000), None
+        except Exception as exc:
+            return None, int((time.monotonic() - started) * 1000), exc
+
     results = await asyncio.gather(
-        *(fetch_chapters(source, dict(info), min_chapter=min_chapter) for _, _, source, info in candidates),
-        return_exceptions=True,
+        *(timed_chapters(source, dict(info)) for _, _, source, info in candidates)
     )
     merged = []
     successful_sources = []
-    for candidate, result in zip(candidates, results):
+
+    for candidate, (result, duration_ms, error) in zip(candidates, results):
         _, _, source, _ = candidate
-        if isinstance(result, Exception) or not result:
-            await asyncio.to_thread(_record_source_health, source, success=False, duration_ms=0, error=str(result)[:300] if isinstance(result, Exception) else "No chapters returned")
+        if error is not None or not result:
+            await asyncio.to_thread(
+                _record_source_health,
+                source,
+                success=False,
+                duration_ms=duration_ms,
+                error=str(error)[:300] if error else "No chapters returned",
+            )
             continue
+
         tagged = []
         for chapter in result:
             if not isinstance(chapter, dict):
@@ -327,8 +358,15 @@ async def fetch_verified_chapters(name: str, *, min_chapter: float | None = None
                 if isinstance(team, dict)
             ]
             tagged.append(chapter_copy)
+
         merged = merge_chapters(merged, tagged)
-        await asyncio.to_thread(_record_source_health, source, success=True, duration_ms=0, chapters=len(tagged))
+        await asyncio.to_thread(
+            _record_source_health,
+            source,
+            success=True,
+            duration_ms=duration_ms,
+            chapters=len(tagged),
+        )
         successful_sources.append(source)
 
     return candidates[0], merged, successful_sources
@@ -483,7 +521,7 @@ async def _update_one_manga(document):
                 {"last_update_status": {"$ne": "updating"}},
                 {
                     "last_update_status": "updating",
-                    "last_attempt_at": {"$lt": now - __import__("datetime").timedelta(minutes=15)}
+                    "last_attempt_at": {"$lt": now - timedelta(minutes=15)}
                 }
             ],
             "_id": document["_id"],
