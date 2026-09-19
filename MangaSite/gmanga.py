@@ -1,6 +1,7 @@
 import re
 import sys
 from os import path
+from urllib.parse import urlencode
 
 from bs4 import BeautifulSoup
 
@@ -16,6 +17,26 @@ _HEADERS = {
 }
 
 
+def _search_url(name):
+    return "https://gmanga.site/?" + urlencode({"s": name, "post_type": "wp-manga"})
+
+
+async def _gmanga_html_search(name):
+    try:
+        text = await fetch_text(_search_url(name), headers=_HEADERS)
+        soup = BeautifulSoup(text, "html.parser")
+        link = soup.select_one(
+            ".c-tabs-item__content .post-title a, "
+            ".c-tabs-item__content .tab-thumb a, "
+            ".row.c-tabs-item__content .post-title a"
+        )
+        if not link:
+            return None
+        return link.get("href")
+    except Exception:
+        return None
+
+
 async def gmanga_search(name):
     url = "https://gmanga.site/wp-admin/admin-ajax.php"
     payload = {"title": name, "action": "wp-manga-search-manga"}
@@ -23,14 +44,14 @@ async def gmanga_search(name):
         import json
         response = await fetch_text(url, method="POST", data=payload, headers=_HEADERS)
         data = json.loads(response)
+        manga_list = data.get("data") or []
+        if manga_list:
+            return await gmanga_info(manga_list[0].get("url"))
     except Exception:
-        return "not found"
+        pass
 
-    manga_list = data.get("data") or []
-    if not manga_list:
-        return "not found"
-
-    return await gmanga_info(manga_list[0].get("url"))
+    fallback_url = await _gmanga_html_search(name)
+    return await gmanga_info(fallback_url) if fallback_url else "not found"
 
 
 async def gmanga_latest_chapters(post_url):
@@ -117,14 +138,15 @@ async def gmanga_chapters(post_url):
             if not chapter_url:
                 continue
             release = chapter.select_one(".chapter-release-date i, .chapter-release-date")
-            release_date = date.convert_arabic_date_to_numeric(release.get_text(" ", strip=True).replace("،", "")) if release else ""
-            pages = await gmanga_chapter_imgs(chapter_url)
+            release_date = date.convert_arabic_date_to_numeric(
+                release.get_text(" ", strip=True).replace("،", "")
+            ) if release else ""
             chapters_info[(chapter_num, "gmanga")] = {
                 "chapter": chapter_num,
                 "teams": [{
                     "team_name": "gmanga",
                     "chapter_date": release_date,
-                    "chapter_page": pages,
+                    "chapter_page": await gmanga_chapter_imgs(chapter_url),
                 }],
             }
         return list(chapters_info.values())
