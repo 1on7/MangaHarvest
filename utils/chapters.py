@@ -113,10 +113,34 @@ def merge_chapters(existing: list | None, incoming: list | None) -> list:
 
             if team.get("chapter_date"):
                 old["chapter_date"] = team["chapter_date"]
-            if team.get("chapter_page"):
-                old["chapter_page"] = team["chapter_page"]
+
+            # Keep every valid page URL discovered across sources instead of
+            # replacing an existing team's pages with the latest response.
+            pages = old.get("chapter_page") or []
+            incoming_pages = team.get("chapter_page") or []
+            if not isinstance(pages, list):
+                pages = [pages]
+            if not isinstance(incoming_pages, list):
+                incoming_pages = [incoming_pages]
+            seen_pages = {str(page).strip() for page in pages if str(page).strip()}
+            for page in incoming_pages:
+                page = str(page).strip()
+                if page and page not in seen_pages:
+                    pages.append(page)
+                    seen_pages.add(page)
+            old["chapter_page"] = pages
+
             if team.get("source"):
-                old["source"] = team["source"]
+                sources = [value.strip() for value in str(old.get("source") or "").split(",") if value.strip()]
+                incoming_source = str(team["source"]).strip()
+                if incoming_source and incoming_source not in sources:
+                    sources.append(incoming_source)
+                old["source"] = ", ".join(sources)
+
+            if team.get("verification_status"):
+                old["verification_status"] = team["verification_status"]
+            if team.get("last_verified_at"):
+                old["last_verified_at"] = team["last_verified_at"]
 
     return sorted(merged.values(), key=lambda item: float(item["chapter"]))
 
