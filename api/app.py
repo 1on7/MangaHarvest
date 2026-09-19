@@ -311,12 +311,31 @@ def update_manga_documents(title: str, info: Dict[str, Any], chapters: list):
 
 
 def _all_manga_documents(limit: int):
-    return list(
-        db.collection_mamga_info.find(
-            {},
-            {"_id": 1, "title": 1, "latest_chapter": 1},
-        ).sort("_id", 1).limit(limit)
-    )
+    pipeline = [
+        {
+            "$addFields": {
+                "_queue_priority": {
+                    "$cond": [
+                        {"$eq": ["$last_update_status", "queued"]},
+                        1,
+                        0,
+                    ]
+                }
+            }
+        },
+        {"$sort": {"_queue_priority": -1, "_id": 1}},
+        {"$limit": limit},
+        {
+            "$project": {
+                "_id": 1,
+                "title": 1,
+                "latest_chapter": 1,
+                "last_update_status": 1,
+                "unverified_gaps": 1,
+            }
+        },
+    ]
+    return list(db.collection_mamga_info.aggregate(pipeline))
 
 
 async def update_manga_library(limit: int = 25):
