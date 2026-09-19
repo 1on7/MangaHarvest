@@ -78,3 +78,19 @@ def extract_image_urls(soup: BeautifulSoup, *, base_url: str = "") -> list[str]:
 
     normalized = [absolute_url(base_url, value) if base_url else str(value).strip() for value in candidates]
     return unique_urls(normalized)
+
+from utils.title import title_similarity
+
+
+def best_match(items, query: str, *, title_keys=("title", "name", "post_title")):
+    """Pick the closest search result instead of blindly trusting the first item."""
+    scored = []
+    for index, item in enumerate(items or []):
+        if not isinstance(item, dict):
+            continue
+        candidate = next((item.get(key) for key in title_keys if item.get(key)), "")
+        score = title_similarity(query, str(candidate))
+        scored.append((score, -index, item))
+    if not scored:
+        return None
+    return max(scored, key=lambda value: (value[0], value[1]))[2]
