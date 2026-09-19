@@ -11,7 +11,7 @@ from utils import date
 
 
 _HEADERS = {
-    "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
+    "Accept": "text/html,application/json;q=0.9,*/*;q=0.8",
     "X-Requested-With": "XMLHttpRequest",
 }
 
@@ -27,7 +27,7 @@ async def gmanga_search(name):
         return "not found"
 
     manga_list = data.get("data") or []
-    if data.get("success") not in (True, "true") or not manga_list:
+    if not manga_list:
         return "not found"
 
     return await gmanga_info(manga_list[0].get("url"))
@@ -59,8 +59,8 @@ async def gmanga_info(url):
         title_node = soup.select_one(".post-title h1")
         summary_node = soup.select_one(".summary__content")
         image_node = soup.select_one(".summary_image img")
-        manga_id = re.search(r'"manga_id"\s*:\s*"?(\d+)', response_text)
-        if not title_node or not manga_id:
+        manga_id = re.search(r'"manga_id"\s*:\s*"?([0-9]+)', response_text)
+        if not title_node:
             return "not found"
 
         latest = await gmanga_latest_chapters(url)
@@ -68,7 +68,7 @@ async def gmanga_info(url):
             "title": title_node.get_text(strip=True),
             "summary": summary_node.get_text(" ", strip=True) if summary_node else "",
             "cover": (image_node.get("data-src") or image_node.get("src", "")) if image_node else "",
-            "id": manga_id.group(1),
+            "id": manga_id.group(1) if manga_id else "",
             "latest_chapter": latest,
             "post_url": url,
         }
