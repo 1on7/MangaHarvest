@@ -203,14 +203,14 @@ async def find_best_source(name: str):
 
 
 
-async def fetch_verified_chapters(name: str):
+async def fetch_verified_chapters(name: str, *, min_chapter: float | None = None):
     """Fetch chapters from every matching source and merge their teams."""
     candidates = await find_source_candidates(name)
     if not candidates:
         return None, [], []
 
     results = await asyncio.gather(
-        *(fetch_chapters(source, dict(info)) for _, _, source, info in candidates),
+        *(fetch_chapters(source, dict(info), min_chapter=min_chapter) for _, _, source, info in candidates),
         return_exceptions=True,
     )
     merged = []
@@ -253,37 +253,37 @@ def _existing_manga_state(title: str):
     return manga_id, max(float(existing.get("latest_chapter") or -1), stored_latest), chapters
 
 
-async def fetch_chapters(source: str, info: Dict[str, Any]):
+async def fetch_chapters(source: str, info: Dict[str, Any], *, min_chapter: float | None = None):
     if source == "gmanga":
         post_url = info.get("post_url")
         if not post_url:
             return []
-        chapters = await gmanga.gmanga_chapters(post_url)
+        chapters = await gmanga.gmanga_chapters(post_url, min_chapter=min_chapter)
         info.pop("post_url", None)
         return chapters or []
 
     if source == "aresnov":
         title = clean_name(str(info.get("title", ""))).replace(" ", "-")
         return (
-            await asyncio.to_thread(aresnov.get_aresnov_chapters, title)
+            await asyncio.to_thread(aresnov.get_aresnov_chapters, title, min_chapter=min_chapter)
             if title
             else []
         )
 
     if source == "dilar":
-        return await dilar.dilar_chapters(info.get("id"), info.get("title")) or []
+        return await dilar.dilar_chapters(info.get("id"), info.get("title"), min_chapter=min_chapter) or []
 
     if source == "asq":
         post_url = info.get("post_url")
         if not post_url:
             return []
-        chapters = await asq.asq_chapters(post_url)
+        chapters = await asq.asq_chapters(post_url, min_chapter=min_chapter)
         info.pop("post_url", None)
         return chapters or []
 
     if source == "mangaspark":
         manga_id = info.get("id")
-        return await mangaSpark.mangaspark_chapters(manga_id) if manga_id else []
+        return await mangaSpark.mangaspark_chapters(manga_id, min_chapter=min_chapter) if manga_id else []
 
     return []
 
@@ -448,7 +448,8 @@ async def _update_one_manga(document):
                 "unverified_gaps": [],
             }
 
-        verified_selected, incoming_chapters, sources = await fetch_verified_chapters(title)
+        incremental_from = stored_latest if not known_gaps else None
+        verified_selected, incoming_chapters, sources = await fetch_verified_chapters(title, min_chapter=incremental_from)
         if verified_selected:
             _, _, source, _ = verified_selected
         if not incoming_chapters:
