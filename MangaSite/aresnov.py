@@ -91,7 +91,7 @@ def aresnov_chapter_imgs(url):
         return []
 
 
-def get_aresnov_chapters(name):
+def get_aresnov_chapters(name, *, min_chapter=None)
     try:
         html = _get(_scraper(), f"{BASE_URL}/series/{name}")
         soup = BeautifulSoup(html, "html.parser")
@@ -113,7 +113,7 @@ def get_aresnov_chapters(name):
             release_date = date.convert_arabic_date_to_numeric(date_node.get_text(" ", strip=True)) if date_node else ""
             chapters_info[(chapter_num, "Aresnov")] = {
                 "chapter": chapter_num,
-                "teams": [{"team_name": "Aresnov", "chapter_date": release_date, "chapter_page": aresnov_chapter_imgs(chapter_url)}],
+                "teams": [{"team_name": "Aresnov", "chapter_date": release_date, "chapter_page": (aresnov_chapter_imgs(chapter_url) if min_chapter is None or chapter_num > min_chapter else [])}],
             }
         return list(chapters_info.values())
     except Exception:
