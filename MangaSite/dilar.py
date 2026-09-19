@@ -60,7 +60,7 @@ async def dilar_chapter_imgs(chapter_url):
         return []
 
 
-async def dilar_chapters(id, title):
+async def dilar_chapters(id, title, *, min_chapter=None)
     try:
         response = await fetch_json(
             f"https://dilar.tube/api/mangas/{id}/releases",
@@ -82,7 +82,7 @@ async def dilar_chapters(id, title):
             chapter_date = datetime.datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d") if timestamp else ""
             chapters[(chapter_num, "Dilar")] = {
                 "chapter": chapter_num,
-                "teams": [{"team_name": "Dilar", "chapter_date": chapter_date, "chapter_page": await dilar_chapter_imgs(chapter_url)}],
+                "teams": [{"team_name": "Dilar", "chapter_date": chapter_date, "chapter_page": (await dilar_chapter_imgs(chapter_url) if min_chapter is None or chapter_num > min_chapter else [])}],
             }
         return list(chapters.values())
     except (ValueError, TypeError, KeyError, RuntimeError):
