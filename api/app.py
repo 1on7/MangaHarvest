@@ -149,16 +149,21 @@ def _safe_sync_call(fn, *args):
         return NOT_FOUND
 
 
-async def find_source_candidates(name: str):
-    results = await asyncio.gather(
+async def find_source_candidates(name: str, *, include_slow=True):
+    calls = [
         _safe_async_call(gmanga.gmanga_search, name),
-        asyncio.to_thread(_safe_sync_call, aresnov.get_aresnov_info, name),
         _safe_async_call(dilar.dilar_info, name),
         _safe_async_call(asq.asq_info, name),
         _safe_async_call(mangaSpark.mangaspark_search, name),
-    )
+    ]
+    sources = ["gmanga", "dilar", "asq", "mangaspark"]
+    if include_slow:
+        calls.append(asyncio.to_thread(_safe_sync_call, aresnov.get_aresnov_info, name))
+        sources.append("aresnov")
+
+    results = await asyncio.gather(*calls)
     candidates = []
-    for result, source in zip(results, ("gmanga", "aresnov", "dilar", "asq", "mangaspark")):
+    for result, source in zip(results, sources):
         candidate = _candidate(result, source, name)
         if candidate:
             candidates.append(candidate)
@@ -465,59 +470,27 @@ async def health_db():
         }
 
 
-async def _add_one_manga(name: str) -> dict:
-    selected = await asyncio.wait_for(
-        find_source_candidates(name, include_slow=False),
-        timeout=5.5,
+def _queue_manga(name: str):
+    title = clean_name(name)
+    now = datetime.now(timezone.utc)
+    result = db.collection_mamga_info.update_one(
+        {"title": title},
+        {
+            "$setOnInsert": {
+                "title": title,
+                "latest_chapter": -1,
+                "created_at": now,
+                "updated_at": now,
+                "last_update_status": "queued",
+            }
+        },
+        upsert=True,
     )
-    selected = selected[0] if selected else None
-    if selected is None:
-        return {"name": name, "status": "not_found"}
-
-    _, source_latest, source, info = selected
-    title = clean_name(str(info.get("title") or name))
-    existing_id, existing_latest, existing_chapters = await asyncio.to_thread(_existing_manga_state, title)
-
-    if existing_chapters and source_latest >= 0 and existing_latest >= source_latest:
-        chapters = existing_chapters
-        chapters_refreshed = False
-    else:
-        try:
-            chapters = normalize_chapters(await fetch_chapters(source, info))
-            if not chapters and existing_chapters:
-                chapters = existing_chapters
-        except Exception:
-            logger.exception("Chapter fetch failed for source=%s title=%s", source, name)
-            chapters = existing_chapters
-        chapters_refreshed = chapters != existing_chapters
-
-    # Metadata enrichment is intentionally deferred. MangaUpdates can take
-    # longer than a serverless HTTP request budget; the scheduled updater
-    # handles enrichment after the manga has been added.
-    metadata = None
-
-    info.update({
-        "year": year,
-        "rate": round(rate, 1) if isinstance(rate, (int, float)) else rate,
-        "associated": associated or [],
-        "categories": categories or [],
-        "status": status or "",
-        "type": manga_type or "",
-        "title": title,
-        "updated_at": datetime.now(timezone.utc),
-    })
-    if chapters:
-        info["latest_chapter"] = max(chapter_number(item.get("chapter")) for item in chapters)
-
-    manga_id, status = await asyncio.to_thread(update_manga_documents, title, info, chapters)
-    return {
-        "name": name,
-        "status": status,
-        "id": manga_id,
-        "source": source,
-        "chapters": len(chapters),
-        "chapters_updated": chapters_refreshed,
-    }
+    document = db.collection_mamga_info.find_one(
+        {"title": title},
+        {"_id": 1, "title": 1, "last_update_status": 1},
+    )
+    return str(document["_id"]), "queued" if result.upserted_id else "already_exists"
 
 
 @app.post("/manga/add")
@@ -535,17 +508,21 @@ async def add_manga(upload_data: UploadData):
     if len(names) > 100:
         raise HTTPException(status_code=413, detail="Maximum 100 manga names per request")
 
-    async def process_one(name: str) -> dict:
+    results = []
+    for name in names:
         try:
-            return await asyncio.wait_for(_add_one_manga(name), timeout=8)
-        except asyncio.TimeoutError:
-            logger.warning("Add timed out for manga=%s", name)
-            return {"name": name, "status": "timeout"}
+            manga_id, status = await asyncio.to_thread(_queue_manga, name)
+            results.append({
+                "name": name,
+                "status": status,
+                "id": manga_id,
+            })
+        except DuplicateKeyError:
+            results.append({"name": name, "status": "already_exists"})
         except Exception:
-            logger.exception("Add failed for manga=%s", name)
-            return {"name": name, "status": "error"}
+            logger.exception("Failed to queue manga=%s", name)
+            results.append({"name": name, "status": "error"})
 
-    results = await asyncio.gather(*(process_one(name) for name in names))
     return {"results": results}
 
 
