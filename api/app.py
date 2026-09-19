@@ -155,10 +155,10 @@ def _candidate(result, source: str, query: str):
     return (ranking_score, latest, source, result)
 
 
-async def _timed_async_call(source: str, fn, *args):
+async def _timed_async_call(source: str, fn, *args, timeout: float = 20.0):
     started = time.monotonic()
     try:
-        result = await fn(*args)
+        result = await asyncio.wait_for(fn(*args), timeout=timeout)
         await asyncio.to_thread(_record_source_health, source, success=isinstance(result, dict) and result != NOT_FOUND, duration_ms=int((time.monotonic() - started) * 1000), error=None if isinstance(result, dict) and result != NOT_FOUND else "No metadata returned")
         return result
     except Exception as exc:
@@ -187,9 +187,17 @@ async def find_source_candidates(name: str, *, include_slow=True):
         async def timed_aresnov():
             started = time.monotonic()
             try:
-                result = await asyncio.to_thread(aresnov.get_aresnov_info, name)
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(aresnov.get_aresnov_info, name),
+                    timeout=20.0,
+                )
                 await asyncio.to_thread(_record_source_health, "aresnov", success=isinstance(result, dict) and result != NOT_FOUND, duration_ms=int((time.monotonic() - started) * 1000), error=None if isinstance(result, dict) and result != NOT_FOUND else "No metadata returned")
                 return result
+            except asyncio.TimeoutError:
+                duration_ms = int((time.monotonic() - started) * 1000)
+                await asyncio.to_thread(_record_source_health, "aresnov", success=False, duration_ms=duration_ms, error="Timeout after 20s")
+                logger.warning("Source timed out: aresnov")
+                return NOT_FOUND
             except Exception as exc:
                 await asyncio.to_thread(_record_source_health, "aresnov", success=False, duration_ms=int((time.monotonic() - started) * 1000), error=str(exc)[:300])
                 logger.exception("Sync source call failed: aresnov")
@@ -319,8 +327,13 @@ async def fetch_verified_chapters(name: str, *, min_chapter: float | None = None
     async def timed_chapters(source: str, info: dict):
         started = time.monotonic()
         try:
-            result = await fetch_chapters(source, info, min_chapter=min_chapter)
+            result = await asyncio.wait_for(
+                fetch_chapters(source, info, min_chapter=min_chapter),
+                timeout=30.0,
+            )
             return result, int((time.monotonic() - started) * 1000), None
+        except asyncio.TimeoutError:
+            return None, int((time.monotonic() - started) * 1000), TimeoutError("Timeout after 30s")
         except Exception as exc:
             return None, int((time.monotonic() - started) * 1000), exc
 
