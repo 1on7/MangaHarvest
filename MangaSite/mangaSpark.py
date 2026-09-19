@@ -89,6 +89,8 @@ async def mangaspark_chapter_imgs(url):
             if src:
                 images.append(src.strip())
         return images
+    except Exception:
+        return []
 
 
 async def mangaspark_chapters(manga_id):
