@@ -203,6 +203,18 @@ async def find_best_source(name: str):
 
 
 
+def _record_source_health(source: str, *, success: bool, duration_ms: int, chapters: int = 0, error: str | None = None):
+    now = datetime.now(timezone.utc)
+    try:
+        db.collection_source_health.update_one(
+            {"source": source},
+            {"$set": {"source": source, "last_checked_at": now, "last_success_at": now if success else None, "last_duration_ms": duration_ms, "last_chapter_count": chapters, "last_error": error}, "$inc": {"checks": 1, "successes": 1 if success else 0, "failures": 0 if success else 1, "chapters_seen": chapters}},
+            upsert=True,
+        )
+    except Exception:
+        logger.exception("Failed to record source health for %s", source)
+
+
 async def fetch_verified_chapters(name: str, *, min_chapter: float | None = None):
     """Fetch chapters from every matching source and merge their teams."""
     candidates = await find_source_candidates(name)
@@ -218,6 +230,7 @@ async def fetch_verified_chapters(name: str, *, min_chapter: float | None = None
     for candidate, result in zip(candidates, results):
         _, _, source, _ = candidate
         if isinstance(result, Exception) or not result:
+            await asyncio.to_thread(_record_source_health, source, success=False, duration_ms=0, error=str(result)[:300] if isinstance(result, Exception) else "No chapters returned")
             continue
         tagged = []
         for chapter in result:
@@ -236,6 +249,7 @@ async def fetch_verified_chapters(name: str, *, min_chapter: float | None = None
             ]
             tagged.append(chapter_copy)
         merged = merge_chapters(merged, tagged)
+        await asyncio.to_thread(_record_source_health, source, success=True, duration_ms=0, chapters=len(tagged))
         successful_sources.append(source)
 
     return candidates[0], merged, successful_sources
@@ -491,6 +505,16 @@ async def _update_one_manga(document):
         logger.exception("Automatic update failed for manga=%s", title)
         await asyncio.to_thread(db.collection_mamga_info.update_one, {"_id": document["_id"]}, {"$set": {"last_checked_at": now, "last_update_status": "error", "last_update_error": str(exc)[:500]}})
         return {"id": manga_id, "title": title, "status": "error"}
+
+
+@app.get("/api/v1/admin/source-health")
+async def source_health(authorization: Optional[str] = Header(None)):
+    expected_token = os.getenv("ADMIN_UPDATE_TOKEN")
+    supplied_token = authorization.removeprefix("Bearer ").strip() if authorization else ""
+    if not expected_token or supplied_token != expected_token:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    documents = await asyncio.to_thread(lambda: list(db.collection_source_health.find({}, {"_id": 0}).sort("failures", -1)))
+    return {"sources": documents}
 
 
 @app.post("/api/v1/admin/update")
