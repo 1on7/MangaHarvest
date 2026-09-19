@@ -80,7 +80,7 @@ async def dilar_chapters(id, title, *, min_chapter=None):
 
             raw_url = release.get("url") or release.get("chapter_url")
             chapter_url = absolute_url(BASE_URL, raw_url) if raw_url else (
-                f"{BASE_URL}/mangas/{id}/{quote(str(title or ''), safe='')}/{number}"
+                f"{BASE_URL}/mangas/{id}/{quote(str(title or '').replace(' ', '-'), safe='-')}/{number}"
             )
             if not chapter_url:
                 continue
