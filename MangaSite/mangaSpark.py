@@ -62,17 +62,17 @@ async def mangaspark_info(url):
         title_node = soup.select_one(".post-title h1")
         description_node = soup.select_one(".description-summary")
         image_node = soup.select_one('meta[property="og:image"]')
-        manga_id = re.search(r'"manga_id"\s*:\s*"?(\d+)', response_text)
+        manga_id = re.search(r'"manga_id"\s*:\s*"?([0-9]+)', response_text)
 
-        if not title_node or not manga_id:
+        if not title_node:
             return "not found"
 
-        latest = await mangaspark_latest_chapters(manga_id.group(1))
+        latest = await mangaspark_latest_chapters(manga_id.group(1)) if manga_id else None
         return {
             "title": title_node.get_text(strip=True),
             "summary": description_node.get_text(" ", strip=True) if description_node else "",
             "cover": image_node.get("content", "") if image_node else "",
-            "id": manga_id.group(1),
+            "id": manga_id.group(1) if manga_id else "",
             "latest_chapter": latest,
         }
     except Exception:
@@ -89,8 +89,6 @@ async def mangaspark_chapter_imgs(url):
             if src:
                 images.append(src.strip())
         return images
-    except Exception:
-        return []
 
 
 async def mangaspark_chapters(manga_id):
