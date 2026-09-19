@@ -434,9 +434,35 @@ async def admin_update(
         "results": results,
     }
 
+@app.get("/")
+async def root():
+    return {
+        "service": "MangaHarvest",
+        "version": app.version,
+        "status": "ok",
+        "docs": "/docs",
+        "health": "/health",
+    }
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "MangaHarvest"}
+
+
+@app.get("/health/db")
+async def health_db():
+    try:
+        await asyncio.to_thread(db.client.admin.command, {"ping": 1})
+        return {"status": "ok", "database": "mongodb"}
+    except Exception as exc:
+        logger.exception("MongoDB health check failed")
+        return {
+            "status": "error",
+            "database": "mongodb",
+            "error": type(exc).__name__,
+            "message": str(exc)[:300],
+        }
 
 
 async def _add_one_manga(name: str) -> dict:
