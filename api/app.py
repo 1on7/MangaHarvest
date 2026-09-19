@@ -394,7 +394,7 @@ def _record_source_health(source: str, *, success: bool, duration_ms: int, chapt
         logger.exception("Failed to record source health for %s", source)
 
 
-async def fetch_verified_chapters(name: str, *, min_chapter: float | None = None):
+async def fetch_verified_chapters(name: str, *, min_chapter: float | None = None, manga_id: str | None = None):
     """Fetch and merge chapters from every matching source with measured health."""
     candidates = await find_source_candidates(name)
     if not candidates:
@@ -405,11 +405,11 @@ async def fetch_verified_chapters(name: str, *, min_chapter: float | None = None
         try:
             result = await asyncio.wait_for(
                 fetch_chapters(source, info, min_chapter=min_chapter),
-                timeout=30.0,
+                timeout=90.0,
             )
             return result, int((time.monotonic() - started) * 1000), None
         except asyncio.TimeoutError:
-            return None, int((time.monotonic() - started) * 1000), TimeoutError("Timeout after 30s")
+            return None, int((time.monotonic() - started) * 1000), TimeoutError("Timeout after 90s")
         except Exception as exc:
             return None, int((time.monotonic() - started) * 1000), exc
 
@@ -419,8 +419,17 @@ async def fetch_verified_chapters(name: str, *, min_chapter: float | None = None
     merged = []
     successful_sources = []
 
-    for candidate, (result, duration_ms, error) in zip(candidates, results):
+    for index, (candidate, (result, duration_ms, error)) in enumerate(zip(candidates, results), start=1):
         _, _, source, _ = candidate
+        if manga_id:
+            try:
+                await asyncio.to_thread(
+                    db.collection_mamga_info.update_one,
+                    {"_id": __import__("bson").ObjectId(manga_id)},
+                    {"$set": {"current_source": source, "sources_checked": index}},
+                )
+            except Exception:
+                logger.exception("Failed to update chapter source progress for %s", manga_id)
         if error is not None or not result:
             await asyncio.to_thread(
                 _record_source_health,
@@ -709,7 +718,7 @@ async def _update_one_manga(document):
         # When gaps exist, request the full chapter range from every matching
         # source so another source can recover the missing chapter(s).
         incremental_from = stored_latest if not known_gaps else None
-        verified_selected, incoming_chapters, sources = await fetch_verified_chapters(title, min_chapter=incremental_from)
+        verified_selected, incoming_chapters, sources = await fetch_verified_chapters(title, min_chapter=incremental_from, manga_id=str(document["_id"]))
         await asyncio.to_thread(
             db.collection_mamga_info.update_one,
             {"_id": document["_id"]},
