@@ -91,7 +91,7 @@ def aresnov_chapter_imgs(url):
         return []
 
 
-def get_aresnov_chapters(name, *, min_chapter=None)
+def get_aresnov_chapters(name, *, min_chapter=None):
     try:
         html = _get(_scraper(), f"{BASE_URL}/series/{name}")
         soup = BeautifulSoup(html, "html.parser")
