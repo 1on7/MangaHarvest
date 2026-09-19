@@ -225,6 +225,49 @@ async def find_source_candidates(name: str, *, include_slow=True):
     )
 
 
+def _merge_source_metadata(candidates):
+    if not candidates:
+        return None
+
+    _, _, primary_source, primary = candidates[0]
+    merged = dict(primary)
+    merged["source"] = primary_source
+    latest_values = [
+        chapter_number(info.get("latest_chapter"))
+        for _, _, _, info in candidates
+        if isinstance(info, dict) and info.get("latest_chapter") is not None
+    ]
+    if latest_values:
+        merged["latest_chapter"] = max(latest_values)
+
+    for _, _, source, info in candidates[1:]:
+        if not isinstance(info, dict):
+            continue
+        for key, value in info.items():
+            if key in {"id", "post_url"} or value in (None, "", [], {}):
+                continue
+            current = merged.get(key)
+            if current in (None, "", [], {}):
+                merged[key] = value
+
+        for key in ("alternative_title", "alternative_titles", "aliases", "genres"):
+            incoming = info.get(key)
+            if not incoming:
+                continue
+            values = [incoming] if isinstance(incoming, str) else list(incoming) if isinstance(incoming, (list, tuple, set)) else []
+            existing = merged.get(key)
+            existing_values = [existing] if isinstance(existing, str) else list(existing) if isinstance(existing, (list, tuple, set)) else []
+            combined = []
+            for value in existing_values + values:
+                value = str(value).strip()
+                if value and value.casefold() not in {item.casefold() for item in combined}:
+                    combined.append(value)
+            if combined:
+                merged[key] = combined if not isinstance(incoming, str) else ", ".join(combined)
+
+    return merged
+
+
 async def find_best_source(name: str):
     cache_key = clean_name(name).casefold()
     cached = SOURCE_CACHE.get(cache_key)
@@ -464,6 +507,12 @@ async def _update_one_manga(document):
             return {"id": manga_id, "title": title, "status": "source_not_found"}
 
         _, source_latest, source, info = selected
+        candidates = await find_source_candidates(title)
+        merged_info = _merge_source_metadata(candidates)
+        if merged_info:
+            info = merged_info
+            source_latest = chapter_number(info.get("latest_chapter"))
+            source = info.get("source") or source
         stored_latest = chapter_number(document.get("latest_chapter"))
 
         # If the primary source has no newer chapter, still verify only when
