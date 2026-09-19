@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlparse
 
 
 def chapter_number(value: Any) -> float | None:
@@ -20,10 +21,19 @@ def _normalize_team(team: dict) -> dict:
     if not isinstance(pages, list):
         pages = [pages]
 
+    normalized_pages = []
+    seen_pages: set[str] = set()
+    for page in pages:
+        page = str(page).strip()
+        if not page or page in seen_pages:
+            continue
+        seen_pages.add(page)
+        normalized_pages.append(page)
+
     normalized = {
         "team_name": normalize_team_name(team.get("team_name")) or "unknown",
         "chapter_date": str(team.get("chapter_date") or ""),
-        "chapter_page": [str(page).strip() for page in pages if str(page).strip()],
+        "chapter_page": normalized_pages,
     }
     if team.get("source"):
         normalized["source"] = str(team["source"])
@@ -214,5 +224,14 @@ def validate_chapter(chapter: dict) -> tuple[bool, list[str]]:
             errors.append(f"no pages for team: {name}")
         elif any(not str(page).strip() for page in pages):
             errors.append(f"empty page URL for team: {name}")
+        else:
+            invalid_urls = [
+                str(page).strip()
+                for page in pages
+                if urlparse(str(page).strip()).scheme not in {"http", "https"}
+                or not urlparse(str(page).strip()).netloc
+            ]
+            if invalid_urls:
+                errors.append(f"invalid page URL for team: {name}")
 
     return not errors, errors
