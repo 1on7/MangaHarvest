@@ -46,7 +46,7 @@ def get_aresnov_info(name):
         response = scraper.post(
             f"{BASE_URL}/wp-admin/admin-ajax.php",
             data={"action": "ts_ac_do_search", "ts_ac_query": name},
-            timeout=20,
+            timeout=4,
         )
         response.raise_for_status()
         data = response.json()
