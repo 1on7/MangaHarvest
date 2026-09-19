@@ -35,16 +35,21 @@ def test_add_rejects_invalid_base64():
 def test_add_accepts_base64_shape(monkeypatch):
     import api.app as api_app
 
-    async def fake_source(name):
-        return None
-
-    monkeypatch.setattr(api_app, "find_best_source", fake_source)
+    monkeypatch.setattr(
+        api_app,
+        "_queue_manga",
+        lambda name: ("507f1f77bcf86cd799439011", "queued"),
+    )
     client = TestClient(app)
     encoded = base64.b64encode(b"Example Manga\n\n").decode()
     response = client.post("/manga/add", json={"data": encoded})
     assert response.status_code == 200
     assert response.json() == {
-        "results": [{"name": "Example Manga", "status": "not_found"}]
+        "results": [{
+            "name": "Example Manga",
+            "status": "queued",
+            "id": "507f1f77bcf86cd799439011",
+        }]
     }
 
 
