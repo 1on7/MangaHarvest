@@ -78,3 +78,40 @@ def test_search_validation():
     client = TestClient(app)
     response = client.get("/manga/search", params={"name": ""})
     assert response.status_code == 422
+
+
+def test_chapter_normalization_deduplicates_case_insensitive_teams():
+    from utils.chapters import normalize_chapters
+
+    chapters = normalize_chapters([
+        {"chapter": "10", "teams": [
+            {"team_name": "Team A", "chapter_page": ["https://a/10"]}
+        ]},
+        {"chapter": 10, "teams": [
+            {"team_name": " team a ", "chapter_page": ["https://a/10"]}
+        ]},
+        {"chapter": "11", "teams": [
+            {"team_name": "Team B", "chapter_page": ["https://b/11"]}
+        ]},
+    ])
+
+    assert [item["chapter"] for item in chapters] == [10, 11]
+    assert len(chapters[0]["teams"]) == 1
+    assert chapters[0]["teams"][0]["team_name"] == "Team A"
+
+
+def test_merge_chapters_preserves_existing_and_adds_sources():
+    from utils.chapters import merge_chapters
+
+    merged = merge_chapters(
+        [{"chapter": 5, "teams": [
+            {"team_name": "Team A", "chapter_page": ["https://a/5"], "source": "gmanga"}
+        ]}],
+        [{"chapter": 5, "teams": [
+            {"team_name": "Team A", "chapter_page": ["https://a/5"], "source": "dilar"}
+        ]}],
+    )
+
+    assert len(merged) == 1
+    assert len(merged[0]["teams"]) == 1
+    assert merged[0]["teams"][0]["source"] == "dilar"
