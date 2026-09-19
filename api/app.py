@@ -487,21 +487,10 @@ async def _add_one_manga(name: str) -> dict:
             chapters = existing_chapters
         chapters_refreshed = chapters != existing_chapters
 
-    metadata_key = title.casefold()
-    metadata = METADATA_CACHE.get(metadata_key)
-    if metadata is None:
-        try:
-            metadata = await asyncio.to_thread(mangaUpdate.get_manga_updates_data, info.get("title", name))
-            if metadata is not None:
-                METADATA_CACHE.set(metadata_key, metadata)
-        except Exception:
-            logger.exception("Metadata enrichment failed for title=%s", name)
-            metadata = None
-
-    if metadata:
-        manga_type, year, rate, categories, associated, status = metadata
-    else:
-        manga_type, year, rate, categories, associated, status = "", None, None, [], [], ""
+    # Metadata enrichment is intentionally deferred. MangaUpdates can take
+    # longer than a serverless HTTP request budget; the scheduled updater
+    # handles enrichment after the manga has been added.
+    metadata = None
 
     info.update({
         "year": year,
@@ -544,7 +533,7 @@ async def add_manga(upload_data: UploadData):
 
     async def process_one(name: str) -> dict:
         try:
-            return await asyncio.wait_for(_add_one_manga(name), timeout=45)
+            return await asyncio.wait_for(_add_one_manga(name), timeout=8)
         except asyncio.TimeoutError:
             logger.warning("Add timed out for manga=%s", name)
             return {"name": name, "status": "timeout"}
