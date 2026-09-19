@@ -439,6 +439,68 @@ async def health():
     return {"status": "ok", "service": "MangaHarvest"}
 
 
+async def _add_one_manga(name: str) -> dict:
+    selected = await find_best_source(name)
+    if selected is None:
+        return {"name": name, "status": "not_found"}
+
+    _, source_latest, source, info = selected
+    title = clean_name(str(info.get("title") or name))
+    existing_id, existing_latest, existing_chapters = await asyncio.to_thread(_existing_manga_state, title)
+
+    if existing_chapters and source_latest >= 0 and existing_latest >= source_latest:
+        chapters = existing_chapters
+        chapters_refreshed = False
+    else:
+        try:
+            chapters = normalize_chapters(await fetch_chapters(source, info))
+            if not chapters and existing_chapters:
+                chapters = existing_chapters
+        except Exception:
+            logger.exception("Chapter fetch failed for source=%s title=%s", source, name)
+            chapters = existing_chapters
+        chapters_refreshed = chapters != existing_chapters
+
+    metadata_key = title.casefold()
+    metadata = METADATA_CACHE.get(metadata_key)
+    if metadata is None:
+        try:
+            metadata = await asyncio.to_thread(mangaUpdate.get_manga_updates_data, info.get("title", name))
+            if metadata is not None:
+                METADATA_CACHE.set(metadata_key, metadata)
+        except Exception:
+            logger.exception("Metadata enrichment failed for title=%s", name)
+            metadata = None
+
+    if metadata:
+        manga_type, year, rate, categories, associated, status = metadata
+    else:
+        manga_type, year, rate, categories, associated, status = "", None, None, [], [], ""
+
+    info.update({
+        "year": year,
+        "rate": round(rate, 1) if isinstance(rate, (int, float)) else rate,
+        "associated": associated or [],
+        "categories": categories or [],
+        "status": status or "",
+        "type": manga_type or "",
+        "title": title,
+        "updated_at": datetime.now(timezone.utc),
+    })
+    if chapters:
+        info["latest_chapter"] = max(chapter_number(item.get("chapter")) for item in chapters)
+
+    manga_id, status = await asyncio.to_thread(update_manga_documents, title, info, chapters)
+    return {
+        "name": name,
+        "status": status,
+        "id": manga_id,
+        "source": source,
+        "chapters": len(chapters),
+        "chapters_updated": chapters_refreshed,
+    }
+
+
 @app.post("/manga/add")
 async def add_manga(upload_data: UploadData):
     if len(upload_data.data) > 2_000_000:
@@ -454,81 +516,17 @@ async def add_manga(upload_data: UploadData):
     if len(names) > 100:
         raise HTTPException(status_code=413, detail="Maximum 100 manga names per request")
 
-    results = []
-    for name in names:
-        selected = await find_best_source(name)
-        if selected is None:
-            results.append({"name": name, "status": "not_found"})
-            continue
-
-        _, source_latest, source, info = selected
-        title = clean_name(str(info.get("title") or name))
-        existing_id, existing_latest, existing_chapters = await asyncio.to_thread(_existing_manga_state, title)
-
-        if existing_chapters and source_latest >= 0 and existing_latest >= source_latest:
-            chapters = existing_chapters
-            chapters_refreshed = False
-        else:
-            try:
-                chapters = normalize_chapters(await fetch_chapters(source, info))
-                if not chapters and existing_chapters:
-                    chapters = existing_chapters
-            except Exception:
-                logger.exception("Chapter fetch failed for source=%s title=%s", source, name)
-                chapters = existing_chapters
-            chapters_refreshed = chapters != existing_chapters
-
-        metadata_key = title.casefold()
-        metadata = METADATA_CACHE.get(metadata_key)
-        if metadata is None:
-            try:
-                metadata = await asyncio.to_thread(
-                    mangaUpdate.get_manga_updates_data,
-                    info.get("title", name),
-                )
-                if metadata is not None:
-                    METADATA_CACHE.set(metadata_key, metadata)
-            except Exception:
-                logger.exception("Metadata enrichment failed for title=%s", name)
-                metadata = None
-        if metadata:
-            manga_type, year, rate, categories, associated, status = metadata
-        else:
-            manga_type, year, rate, categories, associated, status = "", None, None, [], [], ""
-
-        info.update({
-            "year": year,
-            "rate": round(rate, 1) if isinstance(rate, (int, float)) else rate,
-            "associated": associated or [],
-            "categories": categories or [],
-            "status": status or "",
-            "type": manga_type or "",
-        })
-
-        info["title"] = title
-        if chapters:
-            info["latest_chapter"] = max(chapter_number(item.get("chapter")) for item in chapters)
-        info["updated_at"] = datetime.now(timezone.utc)
-
+    async def process_one(name: str) -> dict:
         try:
-            manga_id, status = await asyncio.to_thread(
-                update_manga_documents,
-                title,
-                info,
-                chapters,
-            )
-        except DuplicateKeyError as exc:
-            raise HTTPException(status_code=409, detail="Manga already exists") from exc
+            return await asyncio.wait_for(_add_one_manga(name), timeout=45)
+        except asyncio.TimeoutError:
+            logger.warning("Add timed out for manga=%s", name)
+            return {"name": name, "status": "timeout"}
+        except Exception:
+            logger.exception("Add failed for manga=%s", name)
+            return {"name": name, "status": "error"}
 
-        results.append({
-            "name": name,
-            "status": status,
-            "id": manga_id,
-            "source": source,
-            "chapters": len(chapters),
-            "chapters_updated": chapters_refreshed,
-        })
-
+    results = await asyncio.gather(*(process_one(name) for name in names))
     return {"results": results}
 
 
