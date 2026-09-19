@@ -190,7 +190,29 @@ async def find_source_candidates(name: str, *, include_slow=True):
         candidate = _candidate(result, source, name)
         if candidate:
             candidates.append(candidate)
-    return sorted(candidates, key=lambda item: (item[0], item[1]), reverse=True)
+
+    health_docs = await asyncio.to_thread(
+        lambda: list(db.collection_source_health.find(
+            {"source": {"$in": sources}},
+            {"_id": 0, "source": 1, "checks": 1, "successes": 1, "last_duration_ms": 1},
+        ))
+    )
+    health = {item["source"]: item for item in health_docs}
+
+    def health_score(source: str) -> float:
+        item = health.get(source, {})
+        checks = max(int(item.get("checks", 0)), 0)
+        successes = min(int(item.get("successes", 0)), checks)
+        reliability = successes / checks if checks else 0.5
+        latency = max(int(item.get("last_duration_ms", 0)), 0)
+        latency_score = 1.0 / (1.0 + latency / 1000.0) if latency else 0.5
+        return reliability * 0.8 + latency_score * 0.2
+
+    return sorted(
+        candidates,
+        key=lambda item: (item[0], health_score(item[2]), item[1]),
+        reverse=True,
+    )
 
 
 async def find_best_source(name: str):
