@@ -21,13 +21,12 @@ async def asq_latest_chapters(post_url):
         image = soup.select_one(".summary_image img")
         excerpt = soup.select_one(".post-content p")
         chapter = soup.select_one("li.wp-manga-chapter a")
-        if not chapter:
-            return None
-        match = re.search(r"\d+(?:\.\d+)?", chapter.get_text(" ", strip=True))
-        if not match:
-            return None
-        value = float(match.group())
-        return value, image.get("src", "") if image else "", html.unescape(excerpt.get_text(" ", strip=True)) if excerpt else ""
+        latest = None
+        if chapter:
+            match = re.search(r"\d+(?:\.\d+)?", chapter.get_text(" ", strip=True))
+            if match:
+                latest = float(match.group())
+        return latest, image.get("src", "") if image else "", html.unescape(excerpt.get_text(" ", strip=True)) if excerpt else ""
     except Exception:
         return None
 
@@ -41,15 +40,22 @@ async def asq_info(name):
             headers=_HEADERS,
         )
         items = data.get("data") or []
-        if data.get("success") not in (True, "true") or not items:
+        if not items:
             return "not found"
         item = items[0]
         post_url = item.get("url")
-        info = await asq_latest_chapters(post_url)
-        if not info:
+        if not post_url:
             return "not found"
-        latest, cover, summary = info
-        return {"title": item.get("title", name), "summary": summary, "cover": cover, "id": 0, "latest_chapter": int(latest), "post_url": post_url}
+        info = await asq_latest_chapters(post_url)
+        latest, cover, summary = info if info else (None, "", "")
+        return {
+            "title": item.get("title", name),
+            "summary": summary,
+            "cover": cover,
+            "id": 0,
+            "latest_chapter": latest,
+            "post_url": post_url,
+        }
     except Exception:
         return "not found"
 
