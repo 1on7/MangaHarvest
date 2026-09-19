@@ -64,7 +64,9 @@ def normalize_chapters(chapters: list | None) -> list:
             if not isinstance(team, dict):
                 continue
             normalized = _normalize_team(team)
-            if normalized["team_name"] in existing_teams:
+            team_key = normalized["team_name"].casefold()
+            existing_keys = {name.casefold() for name in existing_teams}
+            if team_key in existing_keys:
                 continue
             target["teams"].append(normalized)
             existing_teams.add(normalized["team_name"])
@@ -96,17 +98,17 @@ def merge_chapters(existing: list | None, incoming: list | None) -> list:
         )
 
         by_team = {
-            normalize_team_name(team.get("team_name")): team
+            normalize_team_name(team.get("team_name")).casefold(): team
             for team in target["teams"]
         }
 
         for team in chapter["teams"]:
             name = normalize_team_name(team.get("team_name")) or "unknown"
-            old = by_team.get(name)
+            old = by_team.get(name.casefold())
 
             if old is None:
                 target["teams"].append(dict(team))
-                by_team[name] = target["teams"][-1]
+                by_team[name.casefold()] = target["teams"][-1]
                 continue
 
             if team.get("chapter_date"):
