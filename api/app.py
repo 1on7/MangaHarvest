@@ -26,7 +26,7 @@ from schema import schemas
 from utils import mangaUpdate
 from utils.chapters import chapter_number as normalized_chapter_number, find_chapter_gaps, merge_chapters, normalize_chapters
 from utils.cache import TTLCache
-from utils.title import title_search_regex, title_similarity
+from utils.title import normalize_title, title_search_regex, title_similarity
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -127,10 +127,28 @@ def clean_name(value: str) -> str:
 def _candidate(result, source: str, query: str):
     if not isinstance(result, dict) or result == NOT_FOUND:
         return None
-    title = str(result.get("title") or "")
-    similarity = title_similarity(query, title)
-    if similarity < 0.35:
+
+    query_normalized = normalize_title(query)
+    titles = [str(result.get("title") or "")]
+    aliases = result.get("alternative_title") or result.get("alternative_titles") or result.get("aliases") or []
+    if isinstance(aliases, str):
+        aliases = [aliases]
+    if isinstance(aliases, (list, tuple, set)):
+        titles.extend(str(value) for value in aliases if value)
+
+    scores = [title_similarity(query, candidate) for candidate in titles]
+    similarity = max(scores, default=0.0)
+
+    # Exact normalized matches are always trusted. For fuzzy matches, require
+    # a meaningful overlap so a generic one-word query cannot select an
+    # unrelated series returned by a source's first search result.
+    exact_match = any(
+        query_normalized and normalize_title(candidate) == query_normalized
+        for candidate in titles
+    )
+    if not exact_match and similarity < 0.45:
         return None
+
     return (similarity, chapter_number(result.get("latest_chapter")), source, result)
 
 
