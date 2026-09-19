@@ -1,6 +1,7 @@
 import re
 from os import path
 import sys
+from urllib.parse import urlencode
 
 from bs4 import BeautifulSoup
 
@@ -26,6 +27,24 @@ def _chapter_number(value):
     return int(number) if number.is_integer() else number
 
 
+def _search_url(name):
+    return "https://mangaspark.org/?" + urlencode({"s": name, "post_type": "wp-manga"})
+
+
+async def _mangaspark_html_search(name):
+    try:
+        text = await fetch_text(_search_url(name), headers=HEADERS)
+        soup = BeautifulSoup(text, "html.parser")
+        link = soup.select_one(
+            ".c-tabs-item__content .post-title a, "
+            ".c-tabs-item__content .tab-thumb a, "
+            ".row.c-tabs-item__content .post-title a"
+        )
+        return link.get("href") if link else None
+    except Exception:
+        return None
+
+
 async def mangaspark_search(name):
     try:
         data = await fetch_json(BASE_URL, method="POST", data={
@@ -33,11 +52,15 @@ async def mangaspark_search(name):
             "title": name,
         }, headers=HEADERS)
         items = data.get("data") or []
-        if not items:
-            return "not found"
-        return await mangaspark_info(items[0].get("url"))
+        if items:
+            result = await mangaspark_info(items[0].get("url"))
+            if result != "not found":
+                return result
     except Exception:
-        return "not found"
+        pass
+
+    fallback_url = await _mangaspark_html_search(name)
+    return await mangaspark_info(fallback_url) if fallback_url else "not found"
 
 
 async def mangaspark_latest_chapters(manga_id):
