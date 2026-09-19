@@ -176,13 +176,13 @@ def _safe_sync_call(fn, *args):
 
 
 async def find_source_candidates(name: str, *, include_slow=True):
-    calls = [
-        _timed_async_call("gmanga", gmanga.gmanga_search, name),
-        _timed_async_call("dilar", dilar.dilar_info, name),
-        _timed_async_call("asq", asq.asq_info, name),
-        _timed_async_call("mangaspark", mangaSpark.mangaspark_search, name),
+    source_calls = [
+        ("gmanga", _timed_async_call("gmanga", gmanga.gmanga_search, name)),
+        ("dilar", _timed_async_call("dilar", dilar.dilar_info, name)),
+        ("asq", _timed_async_call("asq", asq.asq_info, name)),
+        ("mangaspark", _timed_async_call("mangaspark", mangaSpark.mangaspark_search, name)),
     ]
-    sources = ["gmanga", "dilar", "asq", "mangaspark"]
+
     if include_slow:
         async def timed_aresnov():
             started = time.monotonic()
@@ -191,30 +191,86 @@ async def find_source_candidates(name: str, *, include_slow=True):
                     asyncio.to_thread(aresnov.get_aresnov_info, name),
                     timeout=20.0,
                 )
-                await asyncio.to_thread(_record_source_health, "aresnov", success=isinstance(result, dict) and result != NOT_FOUND, duration_ms=int((time.monotonic() - started) * 1000), error=None if isinstance(result, dict) and result != NOT_FOUND else "No metadata returned")
+                await asyncio.to_thread(
+                    _record_source_health,
+                    "aresnov",
+                    success=isinstance(result, dict) and result != NOT_FOUND,
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                    error=None if isinstance(result, dict) and result != NOT_FOUND else "No metadata returned",
+                )
                 return result
             except asyncio.TimeoutError:
                 duration_ms = int((time.monotonic() - started) * 1000)
-                await asyncio.to_thread(_record_source_health, "aresnov", success=False, duration_ms=duration_ms, error="Timeout after 20s")
+                await asyncio.to_thread(
+                    _record_source_health,
+                    "aresnov",
+                    success=False,
+                    duration_ms=duration_ms,
+                    error="Timeout after 20s",
+                )
                 logger.warning("Source timed out: aresnov")
                 return NOT_FOUND
             except Exception as exc:
-                await asyncio.to_thread(_record_source_health, "aresnov", success=False, duration_ms=int((time.monotonic() - started) * 1000), error=str(exc)[:300])
+                await asyncio.to_thread(
+                    _record_source_health,
+                    "aresnov",
+                    success=False,
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                    error=str(exc)[:300],
+                )
                 logger.exception("Sync source call failed: aresnov")
                 return NOT_FOUND
-        calls.append(timed_aresnov())
-        sources.append("aresnov")
 
-    results = await asyncio.gather(*calls)
+        source_calls.append(("aresnov", timed_aresnov()))
+
+    async def run_source(source: str, call):
+        try:
+            result = await asyncio.wait_for(call, timeout=20.0)
+        except asyncio.TimeoutError:
+            logger.warning("Discovery timeout: %s", source)
+            return source, NOT_FOUND
+        except Exception:
+            logger.exception("Discovery failed: %s", source)
+            return source, NOT_FOUND
+
+        await asyncio.to_thread(
+            db.collection_mamga_info.update_one,
+            {"title": clean_name(name)},
+            {"$set": {
+                "current_source": source,
+                "sources_checked": 0,
+                "sources_total": len(source_calls),
+            }},
+        )
+        return source, result
+
+    tasks = [asyncio.create_task(run_source(source, call)) for source, call in source_calls]
+    results = []
+    for task in asyncio.as_completed(tasks):
+        source, result = await task
+        results.append((result, source))
+        try:
+            await asyncio.to_thread(
+                db.collection_mamga_info.update_one,
+                {"title": clean_name(name)},
+                {"$set": {
+                    "current_source": source,
+                    "sources_checked": len(results),
+                    "sources_total": len(source_calls),
+                }},
+            )
+        except Exception:
+            logger.exception("Failed to update discovery progress for %s", source)
+
     candidates = []
-    for result, source in zip(results, sources):
+    for result, source in results:
         candidate = _candidate(result, source, name)
         if candidate:
             candidates.append(candidate)
 
     health_docs = await asyncio.to_thread(
         lambda: list(db.collection_source_health.find(
-            {"source": {"$in": sources}},
+            {"source": {"$in": [source for source, _ in source_calls]}},
             {"_id": 0, "source": 1, "checks": 1, "successes": 1, "last_duration_ms": 1},
         ))
     )
@@ -234,7 +290,6 @@ async def find_source_candidates(name: str, *, include_slow=True):
         key=lambda item: (item[0], health_score(item[2]), item[1]),
         reverse=True,
     )
-
 
 def _merge_source_metadata(candidates):
     if not candidates:
