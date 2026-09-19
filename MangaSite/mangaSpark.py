@@ -116,7 +116,7 @@ async def mangaspark_chapter_imgs(url):
         return []
 
 
-async def mangaspark_chapters(manga_id):
+async def mangaspark_chapters(manga_id, *, min_chapter=None)
     try:
         response_text = await fetch_text(BASE_URL, method="POST", data={
             "action": "manga_get_chapters",
@@ -141,7 +141,7 @@ async def mangaspark_chapters(manga_id):
                 "teams": [{
                     "team_name": "MangaSpark",
                     "chapter_date": date.convert_arabic_date_to_numeric(release_text),
-                    "chapter_page": await mangaspark_chapter_imgs(chapter_url),
+                    "chapter_page": (await mangaspark_chapter_imgs(chapter_url) if min_chapter is None or chapter_num > min_chapter else []),
                 }],
             }
 
