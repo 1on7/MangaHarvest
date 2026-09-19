@@ -181,7 +181,17 @@ async def find_source_candidates(name: str, *, include_slow=True):
     ]
     sources = ["gmanga", "dilar", "asq", "mangaspark"]
     if include_slow:
-        calls.append(asyncio.to_thread(_safe_sync_call, aresnov.get_aresnov_info, name))
+        async def timed_aresnov():
+            started = time.monotonic()
+            try:
+                result = await asyncio.to_thread(aresnov.get_aresnov_info, name)
+                await asyncio.to_thread(_record_source_health, "aresnov", success=isinstance(result, dict) and result != NOT_FOUND, duration_ms=int((time.monotonic() - started) * 1000), error=None if isinstance(result, dict) and result != NOT_FOUND else "No metadata returned")
+                return result
+            except Exception as exc:
+                await asyncio.to_thread(_record_source_health, "aresnov", success=False, duration_ms=int((time.monotonic() - started) * 1000), error=str(exc)[:300])
+                logger.exception("Sync source call failed: aresnov")
+                return NOT_FOUND
+        calls.append(timed_aresnov())
         sources.append("aresnov")
 
     results = await asyncio.gather(*calls)
