@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from bson import ObjectId
 from fastapi import FastAPI, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
+from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from MangaSite import asq, aresnov, dilar, gmanga, mangaSpark
@@ -377,7 +378,7 @@ async def _update_one_manga(document):
             },
             "$inc": {"attempt_count": 1},
         },
-        return_document=True,
+        return_document=ReturnDocument.AFTER,
     )
     if not claimed:
         return {"id": manga_id, "title": title, "status": "skipped"}
@@ -385,7 +386,7 @@ async def _update_one_manga(document):
     try:
         selected = await find_best_source(title)
         if selected is None:
-            await asyncio.to_thread(db.collection_mamga_info.update_one, {"_id": document["_id"]}, {"$set": {"last_checked_at": now, "last_update_status": "source_not_found", "last_error": "No matching source found"}})
+            await asyncio.to_thread(db.collection_mamga_info.update_one, {"_id": document["_id"]}, {"$set": {"last_checked_at": now, "last_update_status": "source_not_found", "last_update_error": "No matching source found"}})
             return {"id": manga_id, "title": title, "status": "source_not_found"}
 
         _, source_latest, source, info = selected
