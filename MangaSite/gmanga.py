@@ -113,7 +113,7 @@ async def gmanga_chapter_imgs(chapter_url):
         return []
 
 
-async def gmanga_chapters(post_url):
+async def gmanga_chapters(post_url, *, min_chapter=None):
     if not post_url:
         return None
     try:
@@ -146,7 +146,7 @@ async def gmanga_chapters(post_url):
                 "teams": [{
                     "team_name": "gmanga",
                     "chapter_date": release_date,
-                    "chapter_page": await gmanga_chapter_imgs(chapter_url),
+                    "chapter_page": (await gmanga_chapter_imgs(chapter_url) if min_chapter is None or chapter_num > min_chapter else []),
                 }],
             }
         return list(chapters_info.values())
