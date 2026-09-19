@@ -744,6 +744,18 @@ async def add_manga(upload_data: UploadData):
     for name in names:
         try:
             manga_id, status = await asyncio.to_thread(_queue_manga, name)
+
+            # Start an immediate best-effort background update. The scheduled
+            # updater remains the durable fallback for serverless instances.
+            if status == "queued":
+                document = await asyncio.to_thread(
+                    db.collection_mamga_info.find_one,
+                    {"_id": ObjectId(manga_id)},
+                )
+                if document:
+                    asyncio.create_task(_update_one_manga(document))
+                    status = "scraping"
+
             results.append({
                 "name": name,
                 "status": status,
@@ -773,6 +785,38 @@ async def latest_manga_v1(
     limit: int = Query(20, ge=1, le=50),
 ):
     return await latest_manga(page=page, limit=limit)
+
+
+@app.get("/api/v1/manga/{manga_id}/status")
+async def manga_status(manga_id: str):
+    manga = await asyncio.to_thread(
+        db.collection_mamga_info.find_one,
+        {"_id": object_id(manga_id)},
+        {
+            "title": 1,
+            "latest_chapter": 1,
+            "last_update_status": 1,
+            "last_checked_at": 1,
+            "last_success_at": 1,
+            "last_update_error": 1,
+            "unverified_gaps": 1,
+            "attempt_count": 1,
+        },
+    )
+    if not manga:
+        raise HTTPException(status_code=404, detail="Manga not found")
+
+    return {
+        "id": manga_id,
+        "title": manga.get("title"),
+        "status": manga.get("last_update_status"),
+        "latest_chapter": manga.get("latest_chapter", -1),
+        "unverified_gaps": manga.get("unverified_gaps") or [],
+        "attempt_count": manga.get("attempt_count", 0),
+        "last_checked_at": manga.get("last_checked_at"),
+        "last_success_at": manga.get("last_success_at"),
+        "error": manga.get("last_update_error"),
+    }
 
 
 @app.get("/api/v1/manga/{manga_id}/chapters")
