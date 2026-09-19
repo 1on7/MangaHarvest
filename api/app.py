@@ -539,7 +539,27 @@ async def _update_one_manga(document):
         return {"id": manga_id, "title": title, "status": "skipped"}
 
     try:
+        await asyncio.to_thread(
+            db.collection_mamga_info.update_one,
+            {"_id": document["_id"]},
+            {"$set": {
+                "last_update_status": "updating",
+                "current_source": "discovering",
+                "update_started_at": now,
+                "sources_checked": 0,
+                "sources_total": 0,
+            }},
+        )
         candidates = await find_source_candidates(title)
+        await asyncio.to_thread(
+            db.collection_mamga_info.update_one,
+            {"_id": document["_id"]},
+            {"$set": {
+                "current_source": "fetching_chapters",
+                "sources_checked": 0,
+                "sources_total": len(candidates),
+            }},
+        )
         selected = candidates[0] if candidates else None
         if selected is None:
             await asyncio.to_thread(db.collection_mamga_info.update_one, {"_id": document["_id"]}, {"$set": {"last_checked_at": now, "last_update_status": "source_not_found", "last_update_error": "No matching source found"}})
@@ -598,6 +618,14 @@ async def _update_one_manga(document):
         # source so another source can recover the missing chapter(s).
         incremental_from = stored_latest if not known_gaps else None
         verified_selected, incoming_chapters, sources = await fetch_verified_chapters(title, min_chapter=incremental_from)
+        await asyncio.to_thread(
+            db.collection_mamga_info.update_one,
+            {"_id": document["_id"]},
+            {"$set": {
+                "current_source": "merging",
+                "sources_checked": len(sources),
+            }},
+        )
         if verified_selected:
             _, _, source, _ = verified_selected
         if not incoming_chapters:
@@ -797,6 +825,11 @@ async def manga_status(manga_id: str):
             "latest_chapter": 1,
             "last_update_status": 1,
             "last_checked_at": 1,
+            "last_attempt_at": 1,
+            "update_started_at": 1,
+            "current_source": 1,
+            "sources_checked": 1,
+            "sources_total": 1,
             "last_success_at": 1,
             "last_update_error": 1,
             "unverified_gaps": 1,
@@ -814,6 +847,11 @@ async def manga_status(manga_id: str):
         "unverified_gaps": manga.get("unverified_gaps") or [],
         "attempt_count": manga.get("attempt_count", 0),
         "last_checked_at": manga.get("last_checked_at"),
+        "last_attempt_at": manga.get("last_attempt_at"),
+        "update_started_at": manga.get("update_started_at"),
+        "current_source": manga.get("current_source"),
+        "sources_checked": manga.get("sources_checked", 0),
+        "sources_total": manga.get("sources_total", 0),
         "last_success_at": manga.get("last_success_at"),
         "error": manga.get("last_update_error"),
     }
