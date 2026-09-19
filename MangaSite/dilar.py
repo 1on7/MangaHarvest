@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 
 sys.path.append(path.dirname(path.dirname(path.abspath(__file__))))
 
-from MangaSite.http import fetch_json, fetch_text
+from MangaSite.http import fetch_json, fetch_text, gather_limited
 
 
 _HEADERS = {"Accept": "application/json,text/html,*/*", "User-Agent": "MangaHarvest/2.0"}
@@ -82,8 +82,17 @@ async def dilar_chapters(id, title, *, min_chapter=None):
             chapter_date = datetime.datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d") if timestamp else ""
             chapters[(chapter_num, "Dilar")] = {
                 "chapter": chapter_num,
-                "teams": [{"team_name": "Dilar", "chapter_date": chapter_date, "chapter_page": (await dilar_chapter_imgs(chapter_url) if min_chapter is None or chapter_num > min_chapter else [])}],
+                "chapter_url": chapter_url,
+                "teams": [{"team_name": "Dilar", "chapter_date": chapter_date, "chapter_page": []}],
             }
+
+        urls = [item["chapter_url"] for item in chapters.values() if min_chapter is None or item["chapter"] > min_chapter]
+        pages = await gather_limited([dilar_chapter_imgs(url) for url in urls], limit=6, return_exceptions=True)
+        pages_map = {url: value if isinstance(value, list) else [] for url, value in zip(urls, pages)}
+        for item in chapters.values():
+            item["teams"][0]["chapter_page"] = pages_map.get(item["chapter_url"], [])
+            item.pop("chapter_url", None)
+
         return list(chapters.values())
     except (ValueError, TypeError, KeyError, RuntimeError):
         return None
