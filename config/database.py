@@ -52,3 +52,7 @@ def ensure_indexes():
         [("last_checked_at", DESCENDING)],
         name="source_last_checked_desc",
     )
+    collection_source_health.create_index(
+        [("disabled_until", ASCENDING)],
+        name="source_disabled_until",
+    )
