@@ -824,6 +824,23 @@ async def source_health(authorization: Optional[str] = Header(None)):
     return {"sources": documents}
 
 
+@app.get("/api/v1/cron/update")
+async def cron_update(request: Request, limit: int = Query(4, ge=1, le=10)):
+    expected_token = os.getenv("CRON_SECRET") or os.getenv("ADMIN_UPDATE_TOKEN")
+    supplied_token = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+    if not expected_token or supplied_token != expected_token:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    results = await update_manga_library(limit)
+    return {
+        "processed": len(results),
+        "updated": sum(item["status"] == "updated" for item in results),
+        "up_to_date": sum(item["status"] == "up_to_date" for item in results),
+        "errors": sum(item["status"] == "error" for item in results),
+        "results": results,
+    }
+
+
 @app.post("/api/v1/admin/update")
 async def admin_update(
     limit: int = Query(25, ge=1, le=100),
