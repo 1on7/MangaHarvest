@@ -501,13 +501,13 @@ async def _update_one_manga(document):
         return {"id": manga_id, "title": title, "status": "skipped"}
 
     try:
-        selected = await find_best_source(title)
+        candidates = await find_source_candidates(title)
+        selected = candidates[0] if candidates else None
         if selected is None:
             await asyncio.to_thread(db.collection_mamga_info.update_one, {"_id": document["_id"]}, {"$set": {"last_checked_at": now, "last_update_status": "source_not_found", "last_update_error": "No matching source found"}})
             return {"id": manga_id, "title": title, "status": "source_not_found"}
 
         _, source_latest, source, info = selected
-        candidates = await find_source_candidates(title)
         merged_info = _merge_source_metadata(candidates)
         if merged_info:
             info = merged_info
