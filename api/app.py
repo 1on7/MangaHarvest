@@ -316,15 +316,15 @@ def _all_manga_documents(limit: int):
         {
             "$addFields": {
                 "_queue_priority": {
-                    "$cond": [
-                        {"$eq": ["$last_update_status", "queued"]},
-                        2,
-                        {"$cond": [
-                            {"$eq": ["$last_update_status", "error"]},
-                            1,
-                            0,
-                        ]}
-                    ]
+                    "$switch": {
+                        "branches": [
+                            {"case": {"$eq": ["$last_update_status", "queued"]}, "then": 4},
+                            {"case": {"$eq": ["$last_update_status", "error"]}, "then": 3},
+                            {"case": {"$eq": ["$last_update_status", "source_not_found"]}, "then": 2},
+                            {"case": {"$eq": ["$last_update_status", "no_chapters"]}, "then": 1}
+                        ],
+                        "default": 0
+                    }
                 }
             }
         },
@@ -368,8 +368,14 @@ async def _update_one_manga(document):
     claimed = await asyncio.to_thread(
         db.collection_mamga_info.find_one_and_update,
         {
+            "$or": [
+                {"last_update_status": {"$ne": "updating"}},
+                {
+                    "last_update_status": "updating",
+                    "last_attempt_at": {"$lt": now - __import__("datetime").timedelta(minutes=15)}
+                }
+            ],
             "_id": document["_id"],
-            "last_update_status": {"$ne": "updating"},
         },
         {
             "$set": {
