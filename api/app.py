@@ -562,8 +562,17 @@ async def _update_one_manga(document):
             {"chapters": 1},
         )
         existing_chapters = normalize_chapters((existing_doc or {}).get("chapters") or [])
-        known_gaps = document.get("unverified_gaps") or []
+        stored_gaps = {
+            int(value)
+            for value in (document.get("unverified_gaps") or [])
+            if isinstance(value, (int, float)) and float(value).is_integer()
+        }
+        detected_gaps = set(find_chapter_gaps(existing_chapters))
+        known_gaps = sorted(stored_gaps | detected_gaps)
 
+        # A source can report the current latest chapter while another source
+        # has failed to provide a chapter in the middle. Never short-circuit
+        # an update when the library contains an unverified gap.
         if source_latest >= 0 and stored_latest >= source_latest and not known_gaps:
             await asyncio.to_thread(
                 db.collection_mamga_info.update_one,
@@ -585,6 +594,8 @@ async def _update_one_manga(document):
                 "unverified_gaps": [],
             }
 
+        # When gaps exist, request the full chapter range from every matching
+        # source so another source can recover the missing chapter(s).
         incremental_from = stored_latest if not known_gaps else None
         verified_selected, incoming_chapters, sources = await fetch_verified_chapters(title, min_chapter=incremental_from)
         if verified_selected:
