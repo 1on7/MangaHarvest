@@ -46,6 +46,10 @@ uvicorn api.app:app --reload --host 0.0.0.0 --port 5000
 
 If database credentials have ever been committed to a public repository, rotate them immediately. Removing credentials from the current file does not remove them from Git history.
 
+## Deployment
+
+Production deploys are triggered from the `master` branch.
+
 ## License
 
 Apache License 2.0.
