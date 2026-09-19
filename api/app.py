@@ -402,6 +402,7 @@ async def fetch_verified_chapters(name: str, *, min_chapter: float | None = None
 
     async def timed_chapters(source: str, info: dict):
         started = time.monotonic()
+        logger.info("[CHAPTERS] %s: started", source)
         try:
             result = await asyncio.wait_for(
                 fetch_chapters(source, info, min_chapter=min_chapter),
@@ -431,6 +432,7 @@ async def fetch_verified_chapters(name: str, *, min_chapter: float | None = None
             except Exception:
                 logger.exception("Failed to update chapter source progress for %s", manga_id)
         if error is not None or not result:
+            logger.warning("[CHAPTERS] %s: failed (%s)", source, str(error) if error else "no chapters returned")
             await asyncio.to_thread(
                 _record_source_health,
                 source,
@@ -466,6 +468,7 @@ async def fetch_verified_chapters(name: str, *, min_chapter: float | None = None
             chapters=len(tagged),
         )
         successful_sources.append(source)
+        logger.info("[CHAPTERS] %s: completed with %d chapters", source, len(tagged))
 
     return candidates[0], merged, successful_sources
 
@@ -651,7 +654,9 @@ async def _update_one_manga(document):
                 "sources_total": 0,
             }},
         )
+        logger.info("[UPDATE] %s: discovering sources", title)
         candidates = await find_source_candidates(title)
+        logger.info("[DISCOVERY] %s: found %d matching sources", title, len(candidates))
         await asyncio.to_thread(
             db.collection_mamga_info.update_one,
             {"_id": document["_id"]},
@@ -718,7 +723,9 @@ async def _update_one_manga(document):
         # When gaps exist, request the full chapter range from every matching
         # source so another source can recover the missing chapter(s).
         incremental_from = stored_latest if not known_gaps else None
+        logger.info("[CHAPTERS] %s: fetching from %d sources", title, len(candidates))
         verified_selected, incoming_chapters, sources = await fetch_verified_chapters(title, min_chapter=incremental_from, manga_id=str(document["_id"]))
+        logger.info("[CHAPTERS] %s: received %d chapters from %d sources", title, len(incoming_chapters), len(sources))
         await asyncio.to_thread(
             db.collection_mamga_info.update_one,
             {"_id": document["_id"]},
