@@ -60,7 +60,7 @@ async def dilar_chapter_imgs(chapter_url):
         return []
 
 
-async def dilar_chapters(id, title, *, min_chapter=None)
+async def dilar_chapters(id, title, *, min_chapter=None):
     try:
         response = await fetch_json(
             f"https://dilar.tube/api/mangas/{id}/releases",
