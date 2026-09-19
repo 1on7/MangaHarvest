@@ -2,6 +2,7 @@ import html
 import re
 import sys
 from os import path
+from urllib.parse import urlencode
 
 from bs4 import BeautifulSoup
 
@@ -12,6 +13,26 @@ from utils import date
 
 
 _HEADERS = {"Accept": "text/html,application/json,*/*", "X-Requested-With": "XMLHttpRequest"}
+
+
+def _search_url(name):
+    return "https://3asq.org/?" + urlencode({"s": name, "post_type": "wp-manga"})
+
+
+async def _asq_html_search(name):
+    try:
+        text = await fetch_text(_search_url(name), headers=_HEADERS)
+        soup = BeautifulSoup(text, "html.parser")
+        link = soup.select_one(
+            ".c-tabs-item__content .post-title a, "
+            ".c-tabs-item__content .tab-thumb a, "
+            ".row.c-tabs-item__content .post-title a"
+        )
+        if not link:
+            return None
+        return link.get("href")
+    except Exception:
+        return None
 
 
 async def asq_latest_chapters(post_url):
@@ -40,24 +61,45 @@ async def asq_info(name):
             headers=_HEADERS,
         )
         items = data.get("data") or []
-        if not items:
-            return "not found"
-        item = items[0]
-        post_url = item.get("url")
-        if not post_url:
-            return "not found"
-        info = await asq_latest_chapters(post_url)
-        latest, cover, summary = info if info else (None, "", "")
-        return {
-            "title": item.get("title", name),
-            "summary": summary,
-            "cover": cover,
-            "id": 0,
-            "latest_chapter": latest,
-            "post_url": post_url,
-        }
+        if items:
+            item = items[0]
+            post_url = item.get("url")
+            if post_url:
+                info = await asq_latest_chapters(post_url)
+                latest, cover, summary = info if info else (None, "", "")
+                return {
+                    "title": item.get("title", name),
+                    "summary": summary,
+                    "cover": cover,
+                    "id": 0,
+                    "latest_chapter": latest,
+                    "post_url": post_url,
+                }
     except Exception:
+        pass
+
+    post_url = await _asq_html_search(name)
+    if not post_url:
         return "not found"
+
+    info = await asq_latest_chapters(post_url)
+    latest, cover, summary = info if info else (None, "", "")
+    title_node = None
+    try:
+        text = await fetch_text(post_url, headers=_HEADERS)
+        soup = BeautifulSoup(text, "html.parser")
+        title_node = soup.select_one(".post-title h1")
+    except Exception:
+        pass
+
+    return {
+        "title": title_node.get_text(" ", strip=True) if title_node else name,
+        "summary": summary,
+        "cover": cover,
+        "id": 0,
+        "latest_chapter": latest,
+        "post_url": post_url,
+    }
 
 
 async def asq_chapter_imgs(chapter_url):
@@ -89,10 +131,16 @@ async def asq_chapters(post_url):
             if number.is_integer():
                 number = int(number)
             release = chapter.select_one(".chapter-release-date i, .chapter-release-date")
-            release_date = date.convert_arabic_date_to_numeric(release.get_text(" ", strip=True).replace("،", "")) if release else ""
+            release_date = date.convert_arabic_date_to_numeric(
+                release.get_text(" ", strip=True).replace("،", "")
+            ) if release else ""
             chapters_info[(number, "asq")] = {
                 "chapter": number,
-                "teams": [{"team_name": "asq", "chapter_date": release_date, "chapter_page": await asq_chapter_imgs(link.get("href"))}],
+                "teams": [{
+                    "team_name": "asq",
+                    "chapter_date": release_date,
+                    "chapter_page": await asq_chapter_imgs(link.get("href")),
+                }],
             }
         return list(chapters_info.values())
     except Exception:
