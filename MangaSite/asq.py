@@ -115,7 +115,7 @@ async def asq_chapter_imgs(chapter_url):
         return []
 
 
-async def asq_chapters(post_url):
+async def asq_chapters(post_url, *, min_chapter=None)
     try:
         text = await fetch_text(post_url, headers=_HEADERS)
         soup = BeautifulSoup(text, "html.parser")
@@ -139,7 +139,7 @@ async def asq_chapters(post_url):
                 "teams": [{
                     "team_name": "asq",
                     "chapter_date": release_date,
-                    "chapter_page": await asq_chapter_imgs(link.get("href")),
+                    "chapter_page": (await asq_chapter_imgs(link.get("href")) if min_chapter is None or number > min_chapter else []),
                 }],
             }
         return list(chapters_info.values())
