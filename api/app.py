@@ -466,7 +466,11 @@ async def health_db():
 
 
 async def _add_one_manga(name: str) -> dict:
-    selected = await find_best_source(name)
+    selected = await asyncio.wait_for(
+        find_source_candidates(name, include_slow=False),
+        timeout=5.5,
+    )
+    selected = selected[0] if selected else None
     if selected is None:
         return {"name": name, "status": "not_found"}
 
