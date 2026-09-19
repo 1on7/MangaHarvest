@@ -317,8 +317,12 @@ def _all_manga_documents(limit: int):
                 "_queue_priority": {
                     "$cond": [
                         {"$eq": ["$last_update_status", "queued"]},
-                        1,
-                        0,
+                        2,
+                        {"$cond": [
+                            {"$eq": ["$last_update_status", "error"]},
+                            1,
+                            0,
+                        ]}
                     ]
                 }
             }
@@ -332,6 +336,7 @@ def _all_manga_documents(limit: int):
                 "latest_chapter": 1,
                 "last_update_status": 1,
                 "unverified_gaps": 1,
+                "attempt_count": 1,
             }
         },
     ]
@@ -356,10 +361,31 @@ async def _update_one_manga(document):
         return {"id": manga_id, "title": title, "status": "invalid_title"}
 
     now = datetime.now(timezone.utc)
+
+    # Atomically claim the manga so overlapping updater runs cannot process
+    # the same record at the same time.
+    claimed = await asyncio.to_thread(
+        db.collection_mamga_info.find_one_and_update,
+        {
+            "_id": document["_id"],
+            "last_update_status": {"$ne": "updating"},
+        },
+        {
+            "$set": {
+                "last_update_status": "updating",
+                "last_attempt_at": now,
+            },
+            "$inc": {"attempt_count": 1},
+        },
+        return_document=True,
+    )
+    if not claimed:
+        return {"id": manga_id, "title": title, "status": "skipped"}
+
     try:
         selected = await find_best_source(title)
         if selected is None:
-            await asyncio.to_thread(db.collection_mamga_info.update_one, {"_id": document["_id"]}, {"$set": {"last_checked_at": now, "last_update_status": "source_not_found"}})
+            await asyncio.to_thread(db.collection_mamga_info.update_one, {"_id": document["_id"]}, {"$set": {"last_checked_at": now, "last_update_status": "source_not_found", "last_error": "No matching source found"}})
             return {"id": manga_id, "title": title, "status": "source_not_found"}
 
         _, source_latest, source, info = selected
@@ -383,7 +409,9 @@ async def _update_one_manga(document):
                 {"$set": {
                     "source": source,
                     "last_checked_at": now,
+                    "last_success_at": now,
                     "last_update_status": "up_to_date",
+                    "last_update_error": None,
                 }},
             )
             return {
@@ -399,7 +427,7 @@ async def _update_one_manga(document):
         if verified_selected:
             _, _, source, _ = verified_selected
         if not incoming_chapters:
-            await asyncio.to_thread(db.collection_mamga_info.update_one, {"_id": document["_id"]}, {"$set": {"source": source, "last_checked_at": now, "last_update_status": "no_chapters"}})
+            await asyncio.to_thread(db.collection_mamga_info.update_one, {"_id": document["_id"]}, {"$set": {"source": source, "last_checked_at": now, "last_update_status": "no_chapters", "last_update_error": "No chapters returned by matching sources"}})
             return {"id": manga_id, "title": title, "status": "no_chapters"}
 
         chapters = merge_chapters(existing_chapters, incoming_chapters)
@@ -421,7 +449,7 @@ async def _update_one_manga(document):
         await asyncio.to_thread(
             db.collection_mamga_info.update_one,
             {"_id": document["_id"]},
-            {"$set": {"latest_chapter": latest, "updated_at": now, "source": sources, "last_checked_at": now, "last_update_status": "updated", "missing_chapters": [], "unverified_gaps": unverified_gaps}},
+            {"$set": {"latest_chapter": latest, "updated_at": now, "source": sources, "last_checked_at": now, "last_success_at": now, "last_update_status": "updated", "last_update_error": None, "missing_chapters": [], "unverified_gaps": unverified_gaps}},
         )
 
         return {
@@ -501,6 +529,7 @@ def _queue_manga(name: str):
                 "created_at": now,
                 "updated_at": now,
                 "last_update_status": "queued",
+                "attempt_count": 0,
             }
         },
         upsert=True,
