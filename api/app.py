@@ -274,7 +274,7 @@ async def find_source_candidates(name: str, *, include_slow=True, manga_id: str 
     health_docs = await asyncio.to_thread(
         lambda: list(db.collection_source_health.find(
             {"source": {"$in": [source for source, _ in source_calls]}},
-            {"_id": 0, "source": 1, "checks": 1, "successes": 1, "last_duration_ms": 1},
+            {"_id": 0, "source": 1, "checks": 1, "successes": 1, "last_duration_ms": 1, "disabled_until": 1},
         ))
     )
     health = {item["source"]: item for item in health_docs}
@@ -935,9 +935,7 @@ async def add_manga(upload_data: UploadData):
         try:
             manga_id, status = await asyncio.to_thread(_queue_manga, name)
 
-            # Queue only. The durable GitHub Actions updater processes queued
-            # manga; do not launch serverless background tasks here because
-            # Vercel may terminate the invocation immediately after the response.
+            # Queue only. Vercel Cron processes queued manga on a durable schedule.
 
             results.append({
                 "name": name,
