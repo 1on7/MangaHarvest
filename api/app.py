@@ -174,10 +174,10 @@ def _safe_sync_call(fn, *args):
 
 async def find_source_candidates(name: str, *, include_slow=True):
     calls = [
-        _safe_async_call(gmanga.gmanga_search, name),
-        _safe_async_call(dilar.dilar_info, name),
-        _safe_async_call(asq.asq_info, name),
-        _safe_async_call(mangaSpark.mangaspark_search, name),
+        _timed_async_call("gmanga", gmanga.gmanga_search, name),
+        _timed_async_call("dilar", dilar.dilar_info, name),
+        _timed_async_call("asq", asq.asq_info, name),
+        _timed_async_call("mangaspark", mangaSpark.mangaspark_search, name),
     ]
     sources = ["gmanga", "dilar", "asq", "mangaspark"]
     if include_slow:
