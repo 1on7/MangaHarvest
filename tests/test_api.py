@@ -134,6 +134,16 @@ def test_merge_chapters_keeps_pages_from_multiple_sources():
     assert team["source"] == "gmanga, dilar"
 
 
+def test_update_detects_existing_chapter_gaps(monkeypatch):
+    import api.app as api_app
+
+    chapters = [
+        {"chapter": 1, "teams": [{"team_name": "A", "chapter_page": ["https://a/1"]}]},
+        {"chapter": 3, "teams": [{"team_name": "A", "chapter_page": ["https://a/3"]}]},
+    ]
+    assert api_app.find_chapter_gaps(chapters) == [2]
+
+
 def test_source_candidate_accepts_alternative_title():
     import api.app as api_app
 
