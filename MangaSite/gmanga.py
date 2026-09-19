@@ -7,7 +7,7 @@ from bs4 import BeautifulSoup
 
 sys.path.append(path.dirname(path.dirname(path.abspath(__file__))))
 
-from MangaSite.http import fetch_text
+from MangaSite.http import fetch_text, gather_limited
 from utils import date
 
 
@@ -143,12 +143,32 @@ async def gmanga_chapters(post_url, *, min_chapter=None):
             ) if release else ""
             chapters_info[(chapter_num, "gmanga")] = {
                 "chapter": chapter_num,
+                "chapter_url": chapter_url,
                 "teams": [{
                     "team_name": "gmanga",
                     "chapter_date": release_date,
-                    "chapter_page": (await gmanga_chapter_imgs(chapter_url) if min_chapter is None or chapter_num > min_chapter else []),
+                    "chapter_page": [],
                 }],
             }
+
+        urls = [
+            item["chapter_url"]
+            for item in chapters_info.values()
+            if min_chapter is None or item["chapter"] > min_chapter
+        ]
+        pages = await gather_limited(
+            [gmanga_chapter_imgs(url) for url in urls],
+            limit=6,
+            return_exceptions=True,
+        )
+        pages_map = {
+            url: value if isinstance(value, list) else []
+            for url, value in zip(urls, pages)
+        }
+        for item in chapters_info.values():
+            item["teams"][0]["chapter_page"] = pages_map.get(item["chapter_url"], [])
+            item.pop("chapter_url", None)
+
         return list(chapters_info.values())
     except Exception:
         return None
