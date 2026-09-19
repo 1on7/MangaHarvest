@@ -115,3 +115,36 @@ def test_merge_chapters_preserves_existing_and_adds_sources():
     assert len(merged) == 1
     assert len(merged[0]["teams"]) == 1
     assert merged[0]["teams"][0]["source"] == "dilar"
+
+
+def test_merge_chapters_keeps_pages_from_multiple_sources():
+    from utils.chapters import merge_chapters
+
+    merged = merge_chapters(
+        [{"chapter": 5, "teams": [
+            {"team_name": "Team A", "chapter_page": ["https://a/5/1"], "source": "gmanga"}
+        ]}],
+        [{"chapter": 5, "teams": [
+            {"team_name": "Team A", "chapter_page": ["https://dilar/5/1", "https://a/5/1"], "source": "dilar"}
+        ]}],
+    )
+
+    team = merged[0]["teams"][0]
+    assert team["chapter_page"] == ["https://a/5/1", "https://dilar/5/1"]
+    assert team["source"] == "gmanga, dilar"
+
+
+def test_source_candidate_accepts_alternative_title():
+    import api.app as api_app
+
+    candidate = api_app._candidate(
+        {
+            "title": "Swordmaster's Youngest Son",
+            "alternative_title": "The Swordmaster's Son",
+            "latest_chapter": 120,
+        },
+        "aresnov",
+        "The Swordmaster's Son",
+    )
+
+    assert candidate is not None
